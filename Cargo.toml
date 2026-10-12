@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/Lu4pi/decklight"
-rust-version = "1.80"
+rust-version = "1.85"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -26,6 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 decklight-prolink = { path = "crates/prolink" }
 decklight-simulator = { path = "crates/simulator" }
+decklight-engine = { path = "crates/engine" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -66,6 +66,9 @@ pub struct Scenario {
     /// Nach dem letzten Schritt wieder von vorn beginnen (Länge in ms).
     #[serde(default)]
     pub repeat_after_ms: Option<u64>,
+    /// Decks, die sich wie ein CDJ-2000NXS2 verhalten (keine präzise Position).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub legacy_decks: Vec<u8>,
     pub steps: Vec<Step>,
 }
 
@@ -145,6 +148,7 @@ impl Scenario {
             decks: 2,
             mixer: true,
             repeat_after_ms: Some(180_000),
+            legacy_decks: Vec::new(),
             steps: steps
                 .into_iter()
                 .map(|(at_ms, command)| Step { at_ms, command })

@@ -31,7 +31,8 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] CI (GitHub Actions) für macOS, Windows, Linux: Build + Tests
 - [x] Protokoll-Referenzen in `docs/` verlinken (DJ Link Analysis, Art-Net-Spec, grandMA3 OSC)
 - [ ] Testaufbau festlegen: welche CDJs/DJM vorhanden, Switch, grandMA3 onPC
-- [ ] Wireshark-Mitschnitte vom echten Setup aufnehmen (Laden, Play, Pitch, Loop, Hot Cue, Fader) und als Testdaten einchecken
+- [ ] Wireshark-Mitschnitte vom echten Setup aufnehmen (Laden, Play, Pitch, Loop, Hot Cue, Fader) und als Testdaten einchecken  
+  _Werkzeug fertig: `decklight record mitschnitt.jsonl` zeichnet alle Pakete auf, `decklight replay` spielt sie durch die Engine._
 
 ### Phase 1: PRO DJ LINK lesen
 - [x] Netzwerk-Interface wählbar, UDP 50000/50001/50002 öffnen
@@ -47,14 +48,15 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [ ] **Meilenstein:** CLI zeigt live alle Decks mit Position, BPM, Titel
 
 ### Phase 2: Engine
-- [ ] DeckState pro Player inkl. Track-Wechsel-Erkennung
-- [ ] TimecodeClock: Interpolation zwischen Paketen, Jitterfilter, harte Sprünge nur bei Cue/Loop/Hot Cue
-- [ ] Rückwärtslauf, Pause, Loop-Ende korrekt
-- [ ] MasterSelector mit drei Modi + Hysterese
-- [ ] Event-Bus (Events typisiert, aufzeichen- und abspielbar)
+- [x] DeckState pro Player inkl. Track-Wechsel-Erkennung
+- [x] TimecodeClock: Interpolation zwischen Paketen, Jitterfilter, harte Sprünge nur bei Cue/Loop/Hot Cue
+- [x] Rückwärtslauf, Pause, Loop-Ende korrekt
+- [x] MasterSelector mit drei Modi + Hysterese
+- [x] Event-Bus (Events typisiert, aufzeichen- und abspielbar)
 - [ ] Simulator: virtuelle CDJs aus Audiodatei + PCAP-Replay  
   _Stand: virtuelle CDJs/DJM mit JSON-Szenarien fertig; Audiodatei und PCAP-Replay offen._
-- [ ] **Meilenstein:** Timecode-Abweichung im Simulator < 1 Frame über 10 min
+- [x] **Meilenstein:** Timecode-Abweichung im Simulator < 1 Frame über 10 min  
+  _Stand: CDJ-3000 max. 3,4 ms, CDJ-2000NXS2 (nur Beat-Pakete) max. 5,2 ms im Lauf; NXS2 kennt nach Start/Stopp/Sprung die Position erst mit dem nächsten Beat genau (`crates/engine/tests/timecode_accuracy.rs`)._
 
 ### Phase 3: Ausgänge für grandMA3
 - [ ] Art-Net Timecode (OpTimeCode) senden, Broadcast/Unicast, fps wählbar

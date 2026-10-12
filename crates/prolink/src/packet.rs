@@ -6,7 +6,7 @@
 //! [`Packet::Unknown`] gemeldet und nie als Fehler behandelt: fremde Geräte im
 //! Netz dürfen den Listener nicht aus dem Tritt bringen.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 
 /// Jedes PRO-DJ-LINK-Paket beginnt mit diesen zehn Bytes.
@@ -19,7 +19,7 @@ pub const MIXER_DEVICE_NUMBER: u8 = 0x21;
 pub const PITCH_NEUTRAL: u32 = 0x10_0000;
 
 /// UDP-Port, auf dem ein Paket ankam. Davon hängt die Bedeutung des Typ-Bytes ab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Channel {
     /// Port 50000: Keep-Alive, Anmeldung, Nummernvergabe.
     Announce,
@@ -40,7 +40,7 @@ pub mod kind {
 }
 
 /// Grobe Geräteklasse, abgeleitet aus Nummer, Typ-Byte und Name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceKind {
     Player,
@@ -50,7 +50,7 @@ pub enum DeviceKind {
 }
 
 /// Keep-Alive auf Port 50000, etwa alle 1,5 s von jedem Gerät.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeepAlive {
     pub name: String,
     pub number: u8,
@@ -61,7 +61,7 @@ pub struct KeepAlive {
 }
 
 /// Wiedergabezustand (Byte P1 im CDJ-Status).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayState {
     NoTrack,
@@ -120,7 +120,7 @@ impl PlayState {
 }
 
 /// Medium, aus dem der Track geladen wurde.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackSlot {
     None,
@@ -164,7 +164,7 @@ pub mod flag {
 }
 
 /// Status eines Players (Port 50002, Typ 0x0a), etwa alle 200 ms.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CdjStatus {
     pub name: String,
     pub number: u8,
@@ -200,7 +200,7 @@ impl CdjStatus {
 }
 
 /// Status des Mixers (Port 50002, Typ 0x29).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MixerStatus {
     pub name: String,
     pub number: u8,
@@ -210,7 +210,7 @@ pub struct MixerStatus {
 }
 
 /// Beat-Paket (Port 50001, Typ 0x28), bei jedem Beat eines laufenden Players.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Beat {
     pub name: String,
     pub number: u8,
@@ -231,7 +231,7 @@ impl Beat {
 }
 
 /// Präzise Position (Port 50001, Typ 0x0b), nur CDJ-3000, etwa alle 30 ms.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrecisePosition {
     pub name: String,
     pub number: u8,
@@ -242,7 +242,7 @@ pub struct PrecisePosition {
 }
 
 /// On-Air-Zustand der Mixer-Kanäle (Port 50001, Typ 0x03).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnAirChannels {
     pub name: String,
     pub number: u8,
@@ -250,7 +250,7 @@ pub struct OnAirChannels {
     pub channels: Vec<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Packet {
     KeepAlive(KeepAlive),
