@@ -4,6 +4,7 @@ use crate::runtime::{content_key, track_key, Shared};
 use decklight_engine::{BeatGrid, EngineEvent, Stamped, TrackRef};
 use decklight_library::dbserver::client::asking_player;
 use decklight_library::{load_track, TrackData, TrackLocation};
+use decklight_show::{OffsetTable, TrackKey, TriggerTable};
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
@@ -126,8 +127,15 @@ fn store(
     let Ok(mut s) = shared.lock() else { return };
     let key = content_key(&data.metadata);
     let label = data.metadata.label();
-    s.offsets.rekey(&track_key(&r), &key, &label);
-    s.triggers.rekey(&track_key(&r), &key);
+    let s: &mut Shared = &mut s;
+    adopt(
+        &mut s.offsets,
+        &mut s.triggers,
+        &track_key(&r),
+        &key,
+        &label,
+        data.fingerprint(),
+    );
     let imported = s
         .triggers
         .import_templates(&key, decklight_triggers::hot_cue_templates(&data.cues));
@@ -144,7 +152,7 @@ fn store(
         .map(|d| d.number)
         .collect();
     for deck in decks {
-        apply_grid(&mut s, deck, &r, &data);
+        apply_grid(s, deck, &r, &data);
     }
     tracing::info!(title = %data.metadata.title, artist = %data.metadata.artist, "Metadaten geladen");
     let _ = events.send(Stamped {
@@ -156,6 +164,33 @@ fn store(
         },
     });
     let _ = req.deck;
+}
+
+/// Offsets und Cues auf die endgültige Kennung eines Tracks umhängen: von der
+/// vorläufigen Kennung (vor den Metadaten) und, wenn derselbe Inhalt schon unter
+/// anderem Namen bekannt ist (Tags geändert), von dieser.
+pub(crate) fn adopt(
+    offsets: &mut OffsetTable,
+    triggers: &mut TriggerTable,
+    provisional: &TrackKey,
+    key: &TrackKey,
+    label: &str,
+    hash: Option<String>,
+) {
+    if let Some(known) = hash
+        .as_deref()
+        .and_then(|h| offsets.find_by_hash(h))
+        .cloned()
+    {
+        if &known != key && offsets.get(key).is_none() {
+            tracing::info!(from = %known, to = %key, "Track am Fingerabdruck wiedererkannt");
+            offsets.rekey(&known, key, label);
+            triggers.rekey(&known, key);
+        }
+    }
+    offsets.rekey(provisional, key, label);
+    offsets.set_hash(key, hash);
+    triggers.rekey(provisional, key);
 }
 
 /// Beatgrid und Länge in den Deck-Zustand übernehmen (genauere Position bei NXS2).
@@ -181,5 +216,61 @@ pub(crate) fn apply_grid(s: &mut Shared, deck: u8, track: &TrackRef, data: &Trac
     }
     if d.track_length_ms.is_none() && data.metadata.duration_s > 0 {
         d.track_length_ms = Some(data.metadata.duration_s * 1000);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use decklight_show::Cue;
+
+    fn key(s: &str) -> TrackKey {
+        TrackKey(s.into())
+    }
+
+    #[test]
+    fn renamed_track_keeps_offset_and_cues_via_fingerprint() {
+        let mut offsets = OffsetTable::default();
+        let mut triggers = TriggerTable::default();
+        // Erster Abend: Track von Stick A, Offset von Hand gesetzt, ein Cue.
+        adopt(
+            &mut offsets,
+            &mut triggers,
+            &key("usb-a:12"),
+            &key("Artist – Tittle [5:00]"),
+            "Artist – Tittle",
+            Some("abc".into()),
+        );
+        offsets.set(&key("Artist – Tittle [5:00]"), 5.0 * 3_600_000.0);
+        triggers.add_cue(
+            &key("Artist – Tittle [5:00]"),
+            Cue::at_ms("Drop", 1.0, vec![]),
+        );
+        // Zweiter Abend: Tippfehler im Titel korrigiert, anderer Stick, gleicher Inhalt.
+        adopt(
+            &mut offsets,
+            &mut triggers,
+            &key("usb-b:7"),
+            &key("Artist – Title [5:00]"),
+            "Artist – Title",
+            Some("abc".into()),
+        );
+        let e = offsets.get(&key("Artist – Title [5:00]")).unwrap();
+        assert_eq!(e.offset_ms, 5.0 * 3_600_000.0);
+        assert!(!e.auto);
+        assert_eq!(offsets.entries.len(), 1);
+        assert_eq!(triggers.tracks[&key("Artist – Title [5:00]")].len(), 1);
+
+        // Anderer Inhalt bekommt einen eigenen Eintrag.
+        adopt(
+            &mut offsets,
+            &mut triggers,
+            &key("usb-b:8"),
+            &key("Other [3:00]"),
+            "Other",
+            Some("def".into()),
+        );
+        assert_eq!(offsets.entries.len(), 2);
+        assert_eq!(offsets.find_by_hash("def"), Some(&key("Other [3:00]")));
     }
 }

@@ -24,6 +24,10 @@ pub struct OffsetEntry {
     pub offset_ms: f64,
     /// Automatisch vergeben (true) oder von Hand gesetzt.
     pub auto: bool,
+    /// Inhalts-Fingerabdruck (Beatgrid + Wellenform), erkennt den Track auch
+    /// nach geänderten Tags wieder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -78,6 +82,7 @@ impl OffsetTable {
             label: label.to_string(),
             offset_ms,
             auto: true,
+            hash: None,
         });
         offset_ms
     }
@@ -110,6 +115,7 @@ impl OffsetTable {
                 label: String::new(),
                 offset_ms,
                 auto: false,
+                hash: None,
             }),
         }
     }
@@ -131,6 +137,22 @@ impl OffsetTable {
             }
         }
         offset
+    }
+
+    /// Kennung des Eintrags mit diesem Fingerabdruck.
+    pub fn find_by_hash(&self, hash: &str) -> Option<&TrackKey> {
+        self.entries
+            .iter()
+            .find(|e| e.hash.as_deref() == Some(hash))
+            .map(|e| &e.key)
+    }
+
+    pub fn set_hash(&mut self, key: &TrackKey, hash: Option<String>) {
+        if let Some(e) = self.entries.iter_mut().find(|e| &e.key == key) {
+            if hash.is_some() {
+                e.hash = hash;
+            }
+        }
     }
 
     pub fn remove(&mut self, key: &TrackKey) {
