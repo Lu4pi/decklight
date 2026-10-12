@@ -114,6 +114,25 @@ impl OffsetTable {
         }
     }
 
+    /// Ein Track hat eine bessere Kennung bekommen (z. B. nach dem Laden der
+    /// Metadaten). Gibt es die neue Kennung schon, gewinnt deren Offset.
+    pub fn rekey(&mut self, old: &TrackKey, new: &TrackKey, label: &str) -> f64 {
+        if old != new {
+            if self.get(new).is_some() {
+                self.entries.retain(|e| &e.key != old || !e.auto);
+            } else if let Some(e) = self.entries.iter_mut().find(|e| &e.key == old) {
+                e.key = new.clone();
+            }
+        }
+        let offset = self.assign(new, label);
+        if let Some(e) = self.entries.iter_mut().find(|e| &e.key == new) {
+            if !label.is_empty() {
+                e.label = label.to_string();
+            }
+        }
+        offset
+    }
+
     pub fn remove(&mut self, key: &TrackKey) {
         self.entries.retain(|e| &e.key != key);
     }
@@ -207,6 +226,18 @@ mod tests {
         assert_eq!(t.assign(&key("d"), "D"), 4.0 * HOUR_MS);
         t.remove(&key("a"));
         assert_eq!(t.assign(&key("e"), "E"), HOUR_MS);
+    }
+
+    #[test]
+    fn rekey_keeps_offset_or_prefers_existing() {
+        let mut t = OffsetTable::default();
+        t.assign(&key("p1-usb-5"), "");
+        assert_eq!(t.rekey(&key("p1-usb-5"), &key("Song"), "A – Song"), HOUR_MS);
+        assert_eq!(t.get(&key("Song")).unwrap().label, "A – Song");
+        // Derselbe Song von einem anderen Stick: bekannter Offset gewinnt.
+        t.assign(&key("p2-usb-9"), "");
+        assert_eq!(t.rekey(&key("p2-usb-9"), &key("Song"), "A – Song"), HOUR_MS);
+        assert_eq!(t.entries.len(), 1);
     }
 
     #[test]

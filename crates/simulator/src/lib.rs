@@ -5,10 +5,13 @@
 //! [`Simulator::step`] ist deterministisch (keine Uhr, kein Netz) und liefert die
 //! fälligen Pakete; [`run`] schickt sie in Echtzeit per UDP los.
 
+pub mod art;
 pub mod deck;
+pub mod library;
 pub mod scenario;
 
 pub use deck::{SimDeck, SimTrack};
+pub use library::SimLibrary;
 pub use scenario::{Command, Scenario, Step};
 
 use decklight_prolink::encode;

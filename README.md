@@ -3,8 +3,8 @@
 Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das Netz
 überwachen und eine grandMA3 per Timecode und OSC synchron zur Musik fahren.
 
-> Status: frühe Entwicklung (v0.1). Geräteerkennung, Status-Pakete und Simulator
-> laufen; Engine, Timecode-Ausgänge, Trigger und Oberfläche folgen Phase für Phase
+> Status: frühe Entwicklung (v0.1). Geräteerkennung, Engine, Timecode-Ausgänge,
+> Track-Metadaten und Simulator laufen; Trigger und Oberfläche folgen Phase für Phase
 > (siehe [docs/checkliste.md](docs/checkliste.md)).
 
 ## Was DeckLight v1 können soll
@@ -22,7 +22,7 @@ Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das N
 # Terminal 1: zwei virtuelle CDJ-3000 und ein DJM, nur auf diesem Rechner
 cargo run -p decklight -- simulate
 
-# Terminal 2: Decks live anzeigen
+# Terminal 2: Decks live anzeigen, mit Titel aus dem simulierten dbserver
 cargo run -p decklight -- watch --passive
 ```
 
@@ -49,6 +49,7 @@ anpassen, dann `decklight simulate --scenario meine-show.json`.
 | `crates/prolink` | PRO DJ LINK: Pakete lesen/schreiben, Geräteerkennung, virtueller Player |
 | `crates/engine` | Deck-Zustand, Timecode-Uhr mit Jitterfilter, Master-Auswahl, Ereignisse |
 | `crates/outputs` | Timecode-Rechnung, Art-Net-Timecode, MTC, OSC, MIDI |
+| `crates/library` | dbserver-Client und -Server, ANLZ (Wellenform, Cues), Track-Cache |
 | `crates/show` | Show-Daten: Track-Offsets mit CSV-Import/Export |
 | `crates/core` | Laufzeit: verbindet Netz, Engine, Show und Ausgänge |
 | `crates/simulator` | Virtuelle CDJs und DJM mit echten Paketen, Szenarien als JSON |

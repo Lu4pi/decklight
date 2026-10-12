@@ -1,6 +1,6 @@
 //! Timecode-Ausgang in einem eigenen Thread mit Millisekunden-Takt.
 
-use crate::runtime::{track_key, Shared};
+use crate::runtime::Shared;
 use decklight_outputs::artnet::{ArtNetSender, ARTNET_PORT};
 use decklight_outputs::{GeneratorConfig, TcInput, TcMessage, Timecode, TimecodeGenerator};
 use decklight_show::TrackKey;
@@ -174,7 +174,7 @@ pub(crate) fn master_input(
         return (none, Some(n), None, None);
     };
     let moving = deck.moving;
-    let key = track_key(&track);
+    let key = s.key_for(&track);
     let offset = s.offsets.assign(&key, "");
     (
         TcInput {

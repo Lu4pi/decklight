@@ -267,6 +267,7 @@ dependencies = [
  "clap",
  "decklight-core",
  "decklight-engine",
+ "decklight-library",
  "decklight-outputs",
  "decklight-prolink",
  "decklight-show",
@@ -282,6 +283,7 @@ name = "decklight-core"
 version = "0.1.0"
 dependencies = [
  "decklight-engine",
+ "decklight-library",
  "decklight-outputs",
  "decklight-prolink",
  "decklight-show",
@@ -300,6 +302,16 @@ dependencies = [
  "decklight-simulator",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "decklight-library"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -340,6 +352,7 @@ dependencies = [
 name = "decklight-simulator"
 version = "0.1.0"
 dependencies = [
+ "decklight-library",
  "decklight-prolink",
  "serde",
  "serde_json",
@@ -1038,6 +1051,7 @@ version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
 dependencies = [
+ "bytes",
  "libc",
  "mio",
  "pin-project-lite",
