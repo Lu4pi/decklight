@@ -33,6 +33,16 @@ pub(crate) struct TriggerThread {
     handle: Option<JoinHandle<()>>,
 }
 
+impl TriggerThread {
+    /// Platzhalter ohne Thread.
+    pub(crate) fn idle() -> Self {
+        Self {
+            stop: Arc::new(AtomicBool::new(true)),
+            handle: None,
+        }
+    }
+}
+
 impl Drop for TriggerThread {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -212,6 +222,10 @@ fn run(
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         let Ok(mut s) = shared.lock() else { return };
         for (f, error) in done {
+            if let Some(e) = &error {
+                s.monitor
+                    .warn(crate::monitor::Level::Error, format!("{}: {e}", f.name()));
+            }
             let actions: Vec<String> = f.actions.iter().map(Action::describe).collect();
             s.trigger_log.push(LogEntry {
                 t,

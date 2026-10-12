@@ -33,3 +33,97 @@ body {
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
 }
+
+a {
+  color: inherit;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--surface-2);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+button,
+.btn,
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+button,
+.btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+button:hover:not(:disabled),
+.btn:hover {
+  border-color: var(--text-dim);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+  font-weight: 700;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  color: var(--accent);
+}
+
+button.link.danger {
+  color: var(--danger);
+}
+
+button.icon {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  padding: 2px 6px;
+}
+
+input,
+select,
+textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+input[type="color"] {
+  padding: 0;
+  width: 44px;
+  height: 30px;
+}

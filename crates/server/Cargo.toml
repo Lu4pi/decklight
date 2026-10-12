@@ -1,0 +1,32 @@
+[package]
+name = "decklight-server"
+description = "Webserver von DeckLight: WebSocket-Zustand, Befehle, /monitor und /overlay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+decklight-core.workspace = true
+decklight-engine.workspace = true
+decklight-library.workspace = true
+decklight-outputs.workspace = true
+decklight-prolink.workspace = true
+decklight-show.workspace = true
+decklight-triggers.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+decklight-simulator.workspace = true
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+
+[lints]
+workspace = true

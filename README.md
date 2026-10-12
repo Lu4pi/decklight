@@ -4,8 +4,8 @@ Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das N
 überwachen und eine grandMA3 per Timecode und OSC synchron zur Musik fahren.
 
 > Status: frühe Entwicklung (v0.1). Geräteerkennung, Engine, Timecode-Ausgänge,
-> Track-Metadaten, Cues mit OSC/MIDI und Simulator laufen; Oberfläche und Webserver
-> folgen Phase für Phase
+> Track-Metadaten, Cues mit OSC/MIDI, Oberfläche, Webserver und Simulator laufen;
+> Show-Datei, Dauertest und signierte Installer folgen
 > (siehe [docs/checkliste.md](docs/checkliste.md)).
 
 ## Was DeckLight v1 können soll
@@ -23,9 +23,18 @@ Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das N
 # Terminal 1: zwei virtuelle CDJ-3000 und ein DJM, nur auf diesem Rechner
 cargo run -p decklight -- simulate
 
-# Terminal 2: Decks live anzeigen, mit Titel aus dem simulierten dbserver
+# Terminal 2: Oberfläche im Browser unter http://127.0.0.1:8750
+(cd ui && npm ci && npm run build)
+cargo run -p decklight -- serve --passive
+
+# oder nur im Terminal
 cargo run -p decklight -- watch --passive
 ```
+
+Die Desktop-App (`src-tauri`) startet Kern und Server selbst und speichert
+Einstellungen und Show-Daten im Benutzer-Datenordner. Im Netz zeigt
+`http://<rechner>:8750/monitor` alle Decks fürs Tablet, `/overlay` ist ein
+transparentes Overlay für OBS.
 
 Mit echten Playern: `decklight interfaces` zeigt die Netzwerkschnittstellen,
 `decklight watch --iface en5` meldet DeckLight als virtuellen Player 7 an (nie 1–4)
@@ -60,6 +69,7 @@ anpassen, dann `decklight simulate --scenario meine-show.json`.
 | `crates/library` | dbserver-Client und -Server, ANLZ (Wellenform, Cues), Track-Cache |
 | `crates/show` | Show-Daten: Track-Offsets mit CSV-Import/Export, Cues und Trigger |
 | `crates/triggers` | Auslöse-Logik für Cues und globale Trigger, Aktions-Log |
+| `crates/server` | Webserver: WebSocket-Zustand, Befehle, `/monitor`, `/overlay`, Einstellungen |
 | `crates/core` | Laufzeit: verbindet Netz, Engine, Show und Ausgänge |
 | `crates/simulator` | Virtuelle CDJs und DJM mit echten Paketen, Szenarien als JSON |
 | `crates/app` | Kommandozeile `decklight` |
