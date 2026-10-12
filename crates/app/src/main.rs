@@ -54,6 +54,19 @@ enum Cmd {
         /// Abfrage-Port des simulierten dbservers (Metadaten, Cover, Wellen).
         #[arg(long, default_value_t = 12523)]
         db_port: u16,
+        /// Audiodateien (WAV, AIFF, FLAC, MP3, M4A) als DJ-Set auf Deck 1 und 2.
+        /// Tempo, erster Beat und Wellenform kommen aus der Analyse der Dateien.
+        #[arg(long, num_args = 1.., conflicts_with_all = ["scenario", "replay"])]
+        audio: Vec<std::path::PathBuf>,
+        /// Mitschnitt abspielen: Wireshark (.pcap, .pcapng) oder `decklight record` (.jsonl).
+        #[arg(long, conflicts_with = "scenario")]
+        replay: Option<std::path::PathBuf>,
+        /// Abspielgeschwindigkeit des Mitschnitts.
+        #[arg(long, default_value_t = 1.0, requires = "replay")]
+        speed: f64,
+        /// Mitschnitt nur einmal abspielen (Standard: Schleife).
+        #[arg(long, requires = "replay")]
+        once: bool,
     },
     /// Oberfläche und Webserver starten (Desktop-Browser, /monitor, /overlay).
     Serve(serve::ServeArgs),
@@ -119,6 +132,10 @@ async fn main() -> Result<()> {
             scenario,
             allow_network,
             db_port,
+            audio,
+            replay,
+            speed,
+            once,
         } => {
             if !target.is_loopback() && !allow_network {
                 bail!(
@@ -126,16 +143,68 @@ async fn main() -> Result<()> {
                      CDJs stören. Mit --allow-network bewusst freigeben."
                 );
             }
-            let scenario = match scenario {
+            if let Some(path) = replay {
+                return replay_capture(&path, target, port_base, speed, !once).await;
+            }
+            let mut scenario = match scenario {
                 Some(path) => {
                     let text = std::fs::read_to_string(&path)
                         .with_context(|| format!("{} lesen", path.display()))?;
                     Scenario::from_json(&text).context("Szenario ist kein gültiges JSON")?
                 }
+                None if !audio.is_empty() => Scenario::set_list(
+                    audio
+                        .iter()
+                        .enumerate()
+                        .map(|(i, f)| decklight_simulator::SimTrack {
+                            id: 2001 + i as u32,
+                            title: String::new(),
+                            artist: String::new(),
+                            length_ms: 0,
+                            bpm: 120.0,
+                            first_beat_ms: 0.0,
+                            file: Some(f.clone()),
+                        })
+                        .collect(),
+                ),
                 None => Scenario::demo(),
             };
-            let library =
-                std::sync::Arc::new(decklight_simulator::SimLibrary::from_scenario(&scenario));
+            let has_audio = scenario.steps.iter().any(|s| {
+                matches!(&s.command, decklight_simulator::Command::Load { track, .. } if track.file.is_some())
+            });
+            if has_audio {
+                eprintln!("Analysiere Audiodateien …");
+            }
+            let library = decklight_simulator::SimLibrary::load_audio(&mut scenario)?;
+            if has_audio {
+                // Set-Liste neu planen, jetzt mit echten Längen.
+                if !audio.is_empty() {
+                    let tracks: Vec<_> = scenario
+                        .steps
+                        .iter()
+                        .filter_map(|s| match &s.command {
+                            decklight_simulator::Command::Load { track, .. } => Some(track.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    scenario = Scenario::set_list(tracks);
+                }
+                for s in &scenario.steps {
+                    if let decklight_simulator::Command::Load { track, deck } = &s.command {
+                        if let Some(d) = library.get(track.id) {
+                            eprintln!(
+                                "  Deck {deck}: {}",
+                                decklight_simulator::audio::describe(
+                                    &d.metadata,
+                                    track.bpm,
+                                    track.first_beat_ms
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+            let library = std::sync::Arc::new(library);
             let _db = match decklight_library::dbserver::server::DbServer::start(
                 target.into(),
                 db_port,
@@ -186,6 +255,52 @@ async fn main() -> Result<()> {
 }
 
 /// Beispiel: zwei Cues für den ersten Demo-Track und zwei globale Trigger.
+/// Mitschnitt an die eigenen Ports schicken (pcap, pcapng oder JSON Lines).
+async fn replay_capture(
+    path: &std::path::Path,
+    target: Ipv4Addr,
+    port_base: u16,
+    speed: f64,
+    repeat: bool,
+) -> Result<()> {
+    use decklight_simulator::capture::{self, Captured};
+    let data = std::fs::read(path).with_context(|| format!("{} lesen", path.display()))?;
+    let packets: Vec<Captured> = if data.first() == Some(&b'{') {
+        let records = decklight_engine::record::read_records(std::io::BufReader::new(&data[..]))?;
+        records
+            .iter()
+            .filter_map(|r| {
+                let (channel, bytes) = decklight_prolink::encode::packet(&r.packet)?;
+                Some(Captured {
+                    t: r.t,
+                    channel,
+                    bytes,
+                })
+            })
+            .collect()
+    } else {
+        capture::parse_pcap(&data).with_context(|| format!("{} lesen", path.display()))?
+    };
+    let secs = packets.last().map_or(0.0, |p| p.t);
+    eprintln!(
+        "Spiele {} PRO-DJ-LINK-Pakete ({:.0} s) an {target}:{}–{}{}. Beenden mit Strg+C.",
+        packets.len(),
+        secs,
+        port_base,
+        port_base + 2,
+        if repeat { " in Schleife" } else { "" }
+    );
+    let target = Target {
+        ip: target,
+        ports: PortConfig::from_base(port_base),
+    };
+    tokio::select! {
+        r = capture::play(packets, target, speed, repeat) => r?,
+        _ = tokio::signal::ctrl_c() => {}
+    }
+    Ok(())
+}
+
 fn example_triggers() -> decklight_show::TriggerTable {
     use decklight_outputs::MidiMessage;
     use decklight_show::{

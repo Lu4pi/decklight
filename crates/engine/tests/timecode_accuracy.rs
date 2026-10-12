@@ -19,6 +19,7 @@ fn scenario(legacy: bool) -> Scenario {
         length_ms: 12 * 60_000,
         bpm: 124.0,
         first_beat_ms: 0.0,
+        file: None,
     };
     use Command::*;
     let steps = vec![

@@ -83,6 +83,58 @@ impl Scenario {
 
     /// Eingebaute Demo: zwei Decks, Übergang von Deck 1 auf Deck 2 nach einer
     /// Minute, mit Pitch-Änderung und Loop. Wiederholt sich alle drei Minuten.
+    /// DJ-Set aus einer Trackliste: abwechselnd auf Deck 1 und 2, jeder Track wird
+    /// eine Minute vor dem Ende des vorigen gestartet und übernimmt nach 30 s den
+    /// Master. Danach beginnt das Set von vorn.
+    pub fn set_list(tracks: Vec<SimTrack>) -> Self {
+        use Command::*;
+        let mut steps: Vec<(u64, Command)> = Vec::new();
+        let mut start = 500u64;
+        let mut end = 500u64;
+        for (i, track) in tracks.into_iter().enumerate() {
+            let deck = if i % 2 == 0 { 1 } else { 2 };
+            let len = u64::from(track.length_ms);
+            if i == 0 {
+                steps.push((0, Load { deck, track }));
+                steps.push((0, OnAir { deck, on: true }));
+                steps.push((0, Master { deck }));
+                steps.push((start, Play { deck }));
+            } else {
+                let prev = 3 - deck;
+                let mix = end.saturating_sub(60_000).max(start + 30_000).min(end);
+                steps.push((
+                    mix.saturating_sub(10_000).max(start + 1_000),
+                    Load { deck, track },
+                ));
+                steps.push((mix, Play { deck }));
+                steps.push((mix, OnAir { deck, on: true }));
+                let handover = (mix + 30_000).min(end);
+                steps.push((handover, Master { deck }));
+                steps.push((
+                    handover + 2_000,
+                    OnAir {
+                        deck: prev,
+                        on: false,
+                    },
+                ));
+                steps.push((handover + 5_000, Pause { deck: prev }));
+                start = mix;
+            }
+            end = start + len;
+        }
+        steps.sort_by_key(|(at, _)| *at);
+        Self {
+            decks: 2,
+            mixer: true,
+            repeat_after_ms: Some(end + 2_000),
+            legacy_decks: Vec::new(),
+            steps: steps
+                .into_iter()
+                .map(|(at_ms, command)| Step { at_ms, command })
+                .collect(),
+        }
+    }
+
     pub fn demo() -> Self {
         let a = SimTrack {
             id: 1001,
@@ -91,6 +143,7 @@ impl Scenario {
             length_ms: 6 * 60_000,
             bpm: 126.0,
             first_beat_ms: 120.0,
+            file: None,
         };
         let b = SimTrack {
             id: 1002,
@@ -99,6 +152,7 @@ impl Scenario {
             length_ms: 5 * 60_000 + 30_000,
             bpm: 128.0,
             first_beat_ms: 80.0,
+            file: None,
         };
         use Command::*;
         let steps = vec![

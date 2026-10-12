@@ -10,7 +10,8 @@ use decklight_library::{
 use std::collections::HashMap;
 
 impl SimTrack {
-    pub fn track_data(&self) -> TrackData {
+    /// Erzeugte Track-Daten (Grid aus BPM und erstem Beat, künstliche Wellenform).
+    pub fn synthetic_data(&self) -> TrackData {
         let beat = self.beat_len_ms();
         let beats = ((f64::from(self.length_ms) - self.first_beat_ms) / beat)
             .floor()
@@ -113,16 +114,47 @@ pub struct SimLibrary {
 }
 
 impl SimLibrary {
+    /// Track-Daten aller Tracks im Szenario. Tracks mit Audiodatei müssen vorher
+    /// mit [`SimLibrary::load_audio`] analysiert sein, sonst gibt es erzeugte Daten.
     pub fn from_scenario(s: &Scenario) -> Self {
         let tracks = s
             .steps
             .iter()
             .filter_map(|st| match &st.command {
-                Command::Load { track, .. } => Some((track.id, track.track_data())),
+                Command::Load { track, .. } => Some((track.id, track.synthetic_data())),
                 _ => None,
             })
             .collect();
         Self { tracks }
+    }
+
+    /// Audiodateien im Szenario analysieren: Länge, BPM und erster Beat landen im
+    /// Szenario (für die Decks), Wellenform und Tags in der Bibliothek. Jede Datei
+    /// wird nur einmal gelesen.
+    pub fn load_audio(s: &mut Scenario) -> Result<Self, crate::audio::AudioError> {
+        let mut lib = Self::from_scenario(s);
+        let mut done: HashMap<u32, SimTrack> = HashMap::new();
+        for st in &mut s.steps {
+            let Command::Load { track, .. } = &mut st.command else {
+                continue;
+            };
+            let Some(path) = track.file.clone() else {
+                continue;
+            };
+            if let Some(t) = done.get(&track.id) {
+                *track = t.clone();
+                continue;
+            }
+            let (t, data) = SimTrack::from_audio(track.id, &path)?;
+            lib.tracks.insert(t.id, data);
+            done.insert(t.id, t.clone());
+            *track = t;
+        }
+        Ok(lib)
+    }
+
+    pub fn get(&self, id: u32) -> Option<&TrackData> {
+        self.tracks.get(&id)
     }
 }
 

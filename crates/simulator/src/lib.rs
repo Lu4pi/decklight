@@ -6,6 +6,8 @@
 //! fälligen Pakete; [`run`] schickt sie in Echtzeit per UDP los.
 
 pub mod art;
+pub mod audio;
+pub mod capture;
 pub mod deck;
 pub mod library;
 pub mod scenario;

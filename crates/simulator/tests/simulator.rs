@@ -12,6 +12,7 @@ fn track(bpm: f64) -> SimTrack {
         length_ms: 300_000,
         bpm,
         first_beat_ms: 0.0,
+        file: None,
     }
 }
 
@@ -200,4 +201,57 @@ async fn devices_are_discovered_over_udp_within_three_seconds() {
     assert!(deck1.on_air(snap.on_air.as_ref()));
     assert!(!snap.players[&2].on_air(snap.on_air.as_ref()));
     sim_task.abort();
+}
+
+/// Mitschnitte (JSON Lines) speichern zerlegte Pakete; zum Abspielen müssen sie
+/// sich verlustfrei wieder in Bytes verwandeln lassen.
+#[test]
+fn every_simulated_packet_survives_parse_encode_parse() {
+    let mut sim = Simulator::new(Scenario::demo(), Ipv4Addr::LOCALHOST);
+    let mut kinds = std::collections::BTreeSet::new();
+    for _ in 0..6_000 {
+        for p in sim.step(10.0) {
+            let parsed = packet::parse(p.channel, &p.bytes).expect("Simulator-Paket lesbar");
+            let (channel, bytes) =
+                decklight_prolink::encode::packet(&parsed).expect("bekannter Pakettyp");
+            assert_eq!(channel, p.channel);
+            assert_eq!(packet::parse(channel, &bytes), Some(parsed.clone()));
+            kinds.insert(format!("{:?}", std::mem::discriminant(&parsed)));
+        }
+    }
+    assert!(kinds.len() >= 5, "{kinds:?}");
+}
+
+#[test]
+fn set_list_alternates_decks_and_hands_over_master() {
+    let tracks: Vec<SimTrack> = (0..3)
+        .map(|i| SimTrack {
+            id: 100 + i,
+            length_ms: 180_000,
+            ..track(125.0)
+        })
+        .collect();
+    let s = Scenario::set_list(tracks);
+    let loads: Vec<(u64, u8, u32)> = s
+        .steps
+        .iter()
+        .filter_map(|st| match &st.command {
+            Command::Load { deck, track } => Some((st.at_ms, *deck, track.id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        loads,
+        vec![(0, 1, 100), (110_500, 2, 101), (230_500, 1, 102)]
+    );
+    let masters: Vec<(u64, u8)> = s
+        .steps
+        .iter()
+        .filter_map(|st| match st.command {
+            Command::Master { deck } => Some((st.at_ms, deck)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(masters, vec![(0, 1), (150_500, 2), (270_500, 1)]);
+    assert_eq!(s.repeat_after_ms, Some(422_500));
 }

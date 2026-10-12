@@ -18,6 +18,10 @@ pub struct SimTrack {
     /// Position des ersten Beats im Track.
     #[serde(default)]
     pub first_beat_ms: f64,
+    /// Audiodatei (WAV, AIFF, FLAC, MP3, AAC/M4A): Länge, BPM, erster Beat,
+    /// Wellenform und Tags kommen dann aus der Analyse der Datei.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<std::path::PathBuf>,
 }
 
 impl SimTrack {
