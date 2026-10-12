@@ -70,6 +70,8 @@ enum Cmd {
     MidiPorts,
     /// Demo-Ablaufplan als JSON ausgeben (Vorlage für eigene Szenarien).
     Scenario,
+    /// Beispiel-Datei für Cues und Trigger ausgeben (für `run --triggers`).
+    Triggers,
 }
 
 #[tokio::main]
@@ -170,6 +172,72 @@ async fn main() -> Result<()> {
             }
         }
         Cmd::Scenario => println!("{}", serde_json::to_string_pretty(&Scenario::demo())?),
+        Cmd::Triggers => println!("{}", serde_json::to_string_pretty(&example_triggers())?),
     }
     Ok(())
+}
+
+/// Beispiel: zwei Cues für den ersten Demo-Track und zwei globale Trigger.
+fn example_triggers() -> decklight_show::TriggerTable {
+    use decklight_outputs::MidiMessage;
+    use decklight_show::{
+        Action, Cue, CuePosition, DeckFilter, GlobalEvent, GlobalTrigger, TrackKey, TriggerTable,
+    };
+    let mut t = TriggerTable::default();
+    let key = TrackKey("Sim Artist – Midnight Signal [6:00]".into());
+    t.add_cue(
+        &key,
+        Cue::at_ms(
+            "Intro-Licht",
+            15_000.0,
+            vec![Action::Osc {
+                command: "Go+ Exec 201".into(),
+            }],
+        ),
+    );
+    t.add_cue(
+        &key,
+        Cue {
+            position: CuePosition::Bar { bar: 33, beat: 1 },
+            lead_ms: 40.0,
+            color: Some([255, 40, 40]),
+            ..Cue::at_ms(
+                "Drop",
+                0.0,
+                vec![
+                    Action::Osc {
+                        command: "Go+ Exec 202".into(),
+                    },
+                    Action::Midi {
+                        message: MidiMessage::NoteOn {
+                            channel: 1,
+                            note: 60,
+                            velocity: 127,
+                        },
+                    },
+                ],
+            )
+        },
+    );
+    t.add_global(GlobalTrigger {
+        id: 0,
+        name: "Deck wird Master".into(),
+        on: GlobalEvent::MasterChanged,
+        decks: DeckFilter::Any,
+        actions: vec![Action::Osc {
+            command: "Go+ Exec 10{deck}".into(),
+        }],
+        armed: true,
+    });
+    t.add_global(GlobalTrigger {
+        id: 0,
+        name: "Track geladen".into(),
+        on: GlobalEvent::TrackLoaded,
+        decks: DeckFilter::Any,
+        actions: vec![Action::Osc {
+            command: "Go+ Exec 11{deck}".into(),
+        }],
+        armed: true,
+    });
+    t
 }

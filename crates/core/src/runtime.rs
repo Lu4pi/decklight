@@ -2,10 +2,12 @@
 
 use crate::metadata::{self, FetchRequest};
 use crate::timecode_out::{self, TimecodeOutConfig, TimecodeStatus, TimecodeThread};
+use crate::triggers_out::{self, ActionOutConfig, Manual, TriggerThread};
 use decklight_engine::{ClockConfig, Engine, EngineEvent, MasterMode, Stamped, TrackRef};
 use decklight_library::{TrackData, TrackMetadata};
 use decklight_prolink::{Link, LinkConfig, LinkEvent};
-use decklight_show::{OffsetTable, TrackKey};
+use decklight_show::{Action, OffsetTable, TrackKey, TriggerTable};
+use decklight_triggers::ActionLog;
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -42,6 +44,9 @@ pub struct CoreConfig {
     pub offsets: OffsetTable,
     /// Abfrage-Port des dbservers (`None` = 12523 wie bei echten Playern).
     pub db_query_port: Option<u16>,
+    pub triggers: TriggerTable,
+    /// Ziele für OSC- und MIDI-Aktionen.
+    pub actions: ActionOutConfig,
 }
 
 /// Gemeinsamer Zustand, geschützt durch einen Mutex.
@@ -53,6 +58,8 @@ pub struct Shared {
     pub tracks: HashMap<TrackKey, Arc<TrackData>>,
     /// Welche Kennung ein Track auf einem Medium hat.
     pub keys: HashMap<TrackRef, TrackKey>,
+    pub triggers: TriggerTable,
+    pub trigger_log: ActionLog,
 }
 
 impl Shared {
@@ -71,7 +78,9 @@ pub struct Core {
     events: broadcast::Sender<Stamped>,
     link: Link,
     tasks: Vec<JoinHandle<()>>,
+    manual: Mutex<std::sync::mpsc::Sender<Manual>>,
     _timecode: Option<TimecodeThread>,
+    _triggers: TriggerThread,
 }
 
 impl Core {
@@ -83,6 +92,8 @@ impl Core {
             timecode: TimecodeStatus::default(),
             tracks: HashMap::new(),
             keys: HashMap::new(),
+            triggers: cfg.triggers,
+            trigger_log: ActionLog::default(),
         }));
         let (events, _) = broadcast::channel(4096);
         let own_number = cfg.link.virtual_player.as_ref().map_or(0, |v| v.number);
@@ -144,13 +155,23 @@ impl Core {
         let timecode = cfg
             .timecode
             .map(|tc| timecode_out::spawn(tc, epoch, shared.clone()));
+        let (manual, manual_rx) = std::sync::mpsc::channel();
+        let triggers = triggers_out::spawn(
+            cfg.actions,
+            epoch,
+            shared.clone(),
+            events.clone(),
+            manual_rx,
+        );
         Ok(Self {
             epoch,
             shared,
             events,
             link,
             tasks,
+            manual: Mutex::new(manual),
             _timecode: timecode,
+            _triggers: triggers,
         })
     }
 
@@ -181,6 +202,33 @@ impl Core {
 
     pub fn link(&self) -> &Link {
         &self.link
+    }
+
+    /// Not-Aus: ab sofort löst kein Cue und kein Trigger mehr aus.
+    pub fn panic(&self) {
+        self.set_armed(false);
+    }
+
+    /// Trigger global scharf schalten oder sperren.
+    pub fn set_armed(&self, armed: bool) {
+        let changed = self
+            .with(|s| std::mem::replace(&mut s.triggers.armed, armed) != armed)
+            .unwrap_or(false);
+        if changed {
+            tracing::info!(armed, "Trigger");
+            self.publish(EngineEvent::ArmedChanged { armed });
+        }
+    }
+
+    /// Aktionen sofort senden (Test-Button, Cue von Hand). Läuft auch bei Not-Aus.
+    pub fn fire(&self, name: &str, deck: Option<u8>, actions: Vec<Action>) {
+        if let Ok(tx) = self.manual.lock() {
+            let _ = tx.send(Manual {
+                name: name.to_string(),
+                deck,
+                actions,
+            });
+        }
     }
 
     /// Kurzer Zugriff auf den gemeinsamen Zustand.

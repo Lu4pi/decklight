@@ -4,7 +4,8 @@ Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das N
 überwachen und eine grandMA3 per Timecode und OSC synchron zur Musik fahren.
 
 > Status: frühe Entwicklung (v0.1). Geräteerkennung, Engine, Timecode-Ausgänge,
-> Track-Metadaten und Simulator laufen; Trigger und Oberfläche folgen Phase für Phase
+> Track-Metadaten, Cues mit OSC/MIDI und Simulator laufen; Oberfläche und Webserver
+> folgen Phase für Phase
 > (siehe [docs/checkliste.md](docs/checkliste.md)).
 
 ## Was DeckLight v1 können soll
@@ -35,6 +36,13 @@ sendet Art-Net-Timecode vom Master-Deck, jeder Track bekommt eine eigene Stunde.
 `decklight osc --to 192.168.1.50:8000 --prefix gma3 "Go+ Exec 201"` testet die
 OSC-Verbindung. Einrichtung am Pult: [docs/grandma3.md](docs/grandma3.md).
 
+Cues fürs Pult: `decklight triggers > show-cues.json` erzeugt eine Vorlage mit
+Cues (Position in ms oder Takt/Schlag, Vorlauf, OSC-/MIDI-Aktionen) und globalen
+Triggern (Track geladen, Master-Wechsel, Play, Stop). Dann
+`decklight run --osc 192.168.1.50:8000 --osc-prefix gma3 --triggers show-cues.json`.
+Rekordbox-Hot-Cues neuer Tracks landen automatisch als Vorlagen in der Datei.
+Not-Aus während der Show: `n` + Enter, wieder scharf mit `s` + Enter.
+
 Mitschnitte vom echten Setup: `decklight record show.jsonl` speichert alle
 Pakete, `decklight replay show.jsonl` spielt sie durch die Engine und gibt die
 Ereignisse (Track geladen, Play, Sprünge, Master-Wechsel) als JSON aus.
@@ -50,7 +58,8 @@ anpassen, dann `decklight simulate --scenario meine-show.json`.
 | `crates/engine` | Deck-Zustand, Timecode-Uhr mit Jitterfilter, Master-Auswahl, Ereignisse |
 | `crates/outputs` | Timecode-Rechnung, Art-Net-Timecode, MTC, OSC, MIDI |
 | `crates/library` | dbserver-Client und -Server, ANLZ (Wellenform, Cues), Track-Cache |
-| `crates/show` | Show-Daten: Track-Offsets mit CSV-Import/Export |
+| `crates/show` | Show-Daten: Track-Offsets mit CSV-Import/Export, Cues und Trigger |
+| `crates/triggers` | Auslöse-Logik für Cues und globale Trigger, Aktions-Log |
 | `crates/core` | Laufzeit: verbindet Netz, Engine, Show und Ausgänge |
 | `crates/simulator` | Virtuelle CDJs und DJM mit echten Paketen, Szenarien als JSON |
 | `crates/app` | Kommandozeile `decklight` |

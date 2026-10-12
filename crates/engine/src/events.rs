@@ -61,6 +61,18 @@ pub enum EngineEvent {
         from: Option<u8>,
         to: Option<u8>,
     },
+    /// Ein Cue oder Trigger hat Aktionen ausgelöst (kommt aus dem Trigger-Teil).
+    TriggerFired {
+        deck: Option<u8>,
+        name: String,
+        actions: Vec<String>,
+        late_ms: f64,
+        error: Option<String>,
+    },
+    /// Trigger global scharf geschaltet oder gesperrt (Not-Aus).
+    ArmedChanged {
+        armed: bool,
+    },
 }
 
 /// Ereignis mit Zeitstempel (Sekunden auf der Engine-Uhr).

@@ -37,7 +37,23 @@ aktivieren, unter Windows z. B. loopMIDI installieren. Dann
    ```sh
    decklight osc --to 192.168.1.50:8000 --prefix gma3 "Go+ Exec 201"
    ```
-3. Cue-Punkte und globale Trigger senden dieselben Befehle automatisch (Phase 4).
+3. Cues und Trigger: `decklight triggers > show-cues.json` erzeugt eine Vorlage.
+   Jeder Cue hat eine Position (`{"type":"ms","ms":15000}` oder
+   `{"type":"bar","bar":33,"beat":1}`), optional einen Vorlauf `lead_ms` und
+   eine Liste von Aktionen, z. B. `{"type":"osc","command":"Go+ Exec 201"}`.
+   `{deck}` im Befehl wird durch die Decknummer ersetzt.
+4. Show starten:
+   ```sh
+   decklight run --artnet 2.255.255.255 --osc 192.168.1.50:8000 --osc-prefix gma3 \
+                 --triggers show-cues.json
+   ```
+   Standardmäßig lösen nur Cues des Master-Decks aus (`"scope": "any_deck"` für
+   alle Decks). Not-Aus: `n` + Enter, wieder scharf: `s` + Enter.
+
+Regeln fürs Auslösen: Ein Cue feuert, wenn der Playhead im Lauf über ihn läuft,
+und erst wieder, wenn der Playhead mindestens 250 ms davor stand (Loop, Hot Cue,
+Zurückspulen). Pause und Scrubben im Stillstand lösen nichts aus, ein Sprung
+nach vorn überspringt Cues, ein Hot Cue direkt auf einen Cue löst ihn aus.
 
 DeckLight nutzt bewusst `/cmd` mit Befehlstext statt Objekt-Adressen, weil sich
 diese zwischen MA3-Versionen ändern.

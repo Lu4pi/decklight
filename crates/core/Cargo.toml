@@ -12,6 +12,7 @@ decklight-library.workspace = true
 decklight-outputs.workspace = true
 decklight-prolink.workspace = true
 decklight-show.workspace = true
+decklight-triggers.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

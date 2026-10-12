@@ -33,6 +33,7 @@ decklight-outputs = { path = "crates/outputs" }
 decklight-show = { path = "crates/show" }
 decklight-core = { path = "crates/core" }
 decklight-library = { path = "crates/library" }
+decklight-triggers = { path = "crates/triggers" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

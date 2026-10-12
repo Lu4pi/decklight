@@ -87,6 +87,9 @@ async fn loads_metadata_for_every_loaded_track() {
             "{labels:?}"
         );
         assert_eq!(s.offsets.entries.len(), 2);
+        // Rekordbox-Cues als Vorlagen (4 Hot Cues + 1 Memory Cue je Track).
+        assert_eq!(s.triggers.tracks.len(), 2);
+        assert!(s.triggers.tracks.values().all(|c| c.len() == 5));
     })
     .unwrap();
     sim.abort();

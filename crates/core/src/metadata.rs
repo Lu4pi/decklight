@@ -17,6 +17,8 @@ pub(crate) struct FetchRequest {
 }
 
 const ATTEMPTS: u32 = 3;
+/// So lange auf den Keep-Alive eines Players warten.
+const DEVICE_WAIT: Duration = Duration::from_secs(10);
 
 pub(crate) async fn run(
     mut rx: mpsc::UnboundedReceiver<FetchRequest>,
@@ -59,7 +61,11 @@ async fn fetch(
         track_type: 1,
         rekordbox_id: r.rekordbox_id,
     };
-    for attempt in 1..=ATTEMPTS {
+    // Status-Pakete kommen oft vor dem ersten Keep-Alive: auf die IP des Players
+    // warten, ohne das als Fehlversuch zu zählen.
+    let wait_for_device = Instant::now() + DEVICE_WAIT;
+    let mut attempt = 0;
+    while attempt < ATTEMPTS {
         let target = {
             let Ok(s) = shared.lock() else { return };
             if s.keys.contains_key(&r) {
@@ -74,9 +80,17 @@ async fn fetch(
             ip.map(|ip| (ip, asking_player(own_number, r.source_player, &present)))
         };
         let Some((ip, asking)) = target else {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            if Instant::now() > wait_for_device {
+                tracing::warn!(
+                    player = r.source_player,
+                    "Player unbekannt, keine Metadaten"
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
         };
+        attempt += 1;
         match load_track(ip, query_port, asking, loc).await {
             Ok(data) => {
                 store(req, data, shared, events, epoch);
@@ -102,6 +116,13 @@ fn store(
     let key = content_key(&data.metadata);
     let label = data.metadata.label();
     s.offsets.rekey(&track_key(&r), &key, &label);
+    s.triggers.rekey(&track_key(&r), &key);
+    let imported = s
+        .triggers
+        .import_templates(&key, decklight_triggers::hot_cue_templates(&data.cues));
+    if imported > 0 {
+        tracing::info!(imported, track = %key, "Rekordbox-Cues als Vorlagen übernommen");
+    }
     let data = Arc::new(data);
     s.tracks.insert(key.clone(), data.clone());
     s.keys.insert(r, key);

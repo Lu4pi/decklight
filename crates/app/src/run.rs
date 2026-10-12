@@ -2,11 +2,12 @@
 
 use crate::watch::{link_config, parse_master, NetArgs};
 use anyhow::{bail, Context, Result};
-use decklight_core::{Core, CoreConfig, TimecodeOutConfig};
+use decklight_core::{ActionOutConfig, Core, CoreConfig, TimecodeOutConfig};
+use decklight_engine::EngineEvent;
 use decklight_outputs::{FrameRate, GeneratorConfig, StopMode};
-use decklight_show::OffsetTable;
-use std::io::{IsTerminal, Write};
-use std::net::Ipv4Addr;
+use decklight_show::{OffsetTable, TriggerTable};
+use std::io::{BufRead, IsTerminal, Write};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -32,6 +33,19 @@ pub struct RunArgs {
     /// Offsets aus CSV laden (key;label;offset); beim Beenden wird sie aktualisiert.
     #[arg(long)]
     offsets: Option<PathBuf>,
+    /// OSC-Befehle an dieses Ziel, z. B. die grandMA3 auf 192.168.1.50:8000.
+    #[arg(long)]
+    osc: Option<SocketAddr>,
+    /// OSC-Präfix aus den Einstellungen des Pults (z. B. gma3 → /gma3/cmd).
+    #[arg(long, default_value = "")]
+    osc_prefix: String,
+    /// MIDI-Ausgang für Note/CC-Aktionen (Teil des Namens).
+    #[arg(long)]
+    midi: Option<String>,
+    /// Cues und Trigger als JSON (Vorlage: `decklight triggers`). Wird beim
+    /// Beenden mit übernommenen Rekordbox-Cues aktualisiert.
+    #[arg(long)]
+    triggers: Option<PathBuf>,
 }
 
 pub async fn run(args: RunArgs) -> Result<()> {
@@ -49,6 +63,20 @@ pub async fn run(args: RunArgs) -> Result<()> {
             eprintln!("{n} Offsets aus {} geladen.", path.display());
         }
     }
+    let mut triggers = TriggerTable::default();
+    if let Some(path) = &args.triggers {
+        if path.exists() {
+            let text = std::fs::read_to_string(path)?;
+            triggers = serde_json::from_str(&text)
+                .with_context(|| format!("{} ist keine gültige Trigger-Datei", path.display()))?;
+            let cues: usize = triggers.tracks.values().map(Vec::len).sum();
+            eprintln!(
+                "{cues} Cues und {} globale Trigger aus {} geladen.",
+                triggers.globals.len(),
+                path.display()
+            );
+        }
+    }
     if args.artnet.is_none() && args.mtc.is_none() {
         eprintln!("Hinweis: weder --artnet noch --mtc angegeben, Timecode wird nur angezeigt.");
     }
@@ -62,10 +90,30 @@ pub async fn run(args: RunArgs) -> Result<()> {
             ..Default::default()
         }),
         offsets,
+        db_query_port: Some(args.net.db_port),
+        triggers,
+        actions: ActionOutConfig {
+            osc: args.osc,
+            osc_prefix: args.osc_prefix.clone(),
+            midi_port: args.midi.clone(),
+        },
         ..Default::default()
     })
     .await
     .context("Start fehlgeschlagen")?;
+    eprintln!("Not-Aus: n + Enter. Wieder scharf: s + Enter. Beenden: Strg+C.");
+
+    // Tastatur: Not-Aus und Scharfschalten.
+    let (key_tx, mut keys) = tokio::sync::mpsc::unbounded_channel::<String>();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if key_tx.send(line.trim().to_lowercase()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut events = core.subscribe();
 
     let tty = std::io::stdout().is_terminal();
     let mut tick = tokio::time::interval(Duration::from_millis(40));
@@ -87,10 +135,43 @@ pub async fn run(args: RunArgs) -> Result<()> {
                 if tty { write!(out, "\r\x1b[2K{line}")?; } else { writeln!(out, "{line}")?; }
                 out.flush()?;
             }
+            Some(key) = keys.recv() => match key.as_str() {
+                "n" => core.panic(),
+                "s" => core.set_armed(true),
+                _ => {}
+            },
+            Ok(ev) = events.recv() => {
+                let msg = match ev.event {
+                    EngineEvent::TriggerFired { deck, name, actions, error, .. } => Some(format!(
+                        "{} {name}{}: {}{}",
+                        if error.is_some() { "✗" } else { "▶" },
+                        deck.map_or(String::new(), |d| format!(" (Deck {d})")),
+                        actions.join(", "),
+                        error.map_or(String::new(), |e| format!(" – {e}")),
+                    )),
+                    EngineEvent::ArmedChanged { armed } => Some(
+                        if armed { "Trigger scharf.".into() } else { "NOT-AUS: Trigger gesperrt.".into() },
+                    ),
+                    _ => None,
+                };
+                if let Some(msg) = msg {
+                    let mut out = std::io::stdout().lock();
+                    if tty { write!(out, "\r\x1b[2K")?; }
+                    writeln!(out, "{msg}")?;
+                }
+            }
             _ = tokio::signal::ctrl_c() => break,
         }
     }
     println!();
+    if let Some(path) = &args.triggers {
+        let json = core
+            .with(|s| serde_json::to_string_pretty(&s.triggers))
+            .transpose()?
+            .unwrap_or_default();
+        std::fs::write(path, json).with_context(|| format!("{} schreiben", path.display()))?;
+        eprintln!("Trigger gespeichert in {}.", path.display());
+    }
     if let Some(path) = &args.offsets {
         let csv = core.with(|s| s.offsets.to_csv(rate)).unwrap_or_default();
         std::fs::write(path, csv).with_context(|| format!("{} schreiben", path.display()))?;
