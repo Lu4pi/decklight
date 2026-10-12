@@ -1,0 +1,35 @@
+/* Design-Grundlagen: dunkel, hoher Kontrast, eine Farbe pro Deck. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0d10;
+  --surface: #14181d;
+  --surface-2: #1c2128;
+  --border: #2a313a;
+  --text: #e8ecf1;
+  --text-dim: #8a94a3;
+  --accent: #ffb020;
+  --danger: #ff4d4f;
+  --ok: #3ddc84;
+  --deck-1: #2fa8ff;
+  --deck-2: #ff8a1f;
+  --deck-3: #b36bff;
+  --deck-4: #3ddc84;
+  --deck-5: #ff4fa3;
+  --deck-6: #f5d90a;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
