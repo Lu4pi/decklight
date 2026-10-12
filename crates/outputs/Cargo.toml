@@ -1,0 +1,21 @@
+[package]
+name = "decklight-outputs"
+description = "Timecode und Steuerbefehle: Art-Net Timecode, MTC, OSC, MIDI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+midir = { workspace = true, optional = true }
+rosc.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[features]
+default = ["midi"]
+midi = ["dep:midir"]
+
+[lints]
+workspace = true

@@ -59,12 +59,15 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
   _Stand: CDJ-3000 max. 3,4 ms, CDJ-2000NXS2 (nur Beat-Pakete) max. 5,2 ms im Lauf; NXS2 kennt nach Start/Stopp/Sprung die Position erst mit dem nächsten Beat genau (`crates/engine/tests/timecode_accuracy.rs`)._
 
 ### Phase 3: Ausgänge für grandMA3
-- [ ] Art-Net Timecode (OpTimeCode) senden, Broadcast/Unicast, fps wählbar
-- [ ] MTC (Quarter-Frame + Full-Frame bei Sprung) über MIDI-Port
-- [ ] OSC-Client (UDP), Ziel-IP/Port/Präfix konfigurierbar, `/cmd` mit Befehlstext
-- [ ] MIDI Note/CC als Aktion
-- [ ] Track-Offsets: automatische Vergabe, Editor, CSV-Import/Export
-- [ ] Test mit grandMA3 onPC: Timecode-Show auf zwei Tracks programmieren, Deck-Wechsel, Pitch ±8 %, Loop
+- [x] Art-Net Timecode (OpTimeCode) senden, Broadcast/Unicast, fps wählbar
+- [x] MTC (Quarter-Frame + Full-Frame bei Sprung) über MIDI-Port
+- [x] OSC-Client (UDP), Ziel-IP/Port/Präfix konfigurierbar, `/cmd` mit Befehlstext
+- [x] MIDI Note/CC als Aktion  
+  _Stand: Nachrichten und Ausgang fertig; Auslösen über Trigger folgt in Phase 4._
+- [ ] Track-Offsets: automatische Vergabe, Editor, CSV-Import/Export  
+  _Stand: Automatik und CSV fertig (`decklight run --offsets`); Editor folgt mit der Oberfläche._
+- [ ] Test mit grandMA3 onPC: Timecode-Show auf zwei Tracks programmieren, Deck-Wechsel, Pitch ±8 %, Loop  
+  _Automatischer Ersatz: `crates/core/tests/timecode_e2e.rs` (simulierter CDJ → Art-Net-Empfänger, jeder Frame zur richtigen Zeit). Test am echten Pult steht aus._
 - [ ] **Meilenstein:** MA3 fährt eine Timecode-Show synchron zu einem echten oder simulierten CDJ
 
 ### Phase 4: Trigger
