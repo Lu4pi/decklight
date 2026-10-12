@@ -8,6 +8,7 @@
   import Outputs from "./Outputs.svelte";
   import Monitoring from "./Monitoring.svelte";
   import Toast from "../components/Toast.svelte";
+  import ShowDialog from "../components/ShowDialog.svelte";
   import { toast } from "../lib/toast.svelte";
 
   const tabs = [
@@ -31,6 +32,7 @@
   });
 
   const s = $derived(conn.state);
+  let showsOpen = $state(false);
   const warnCount = $derived(conn.monitor?.warnings.filter((w) => w.level === "error").length ?? 0);
 
   async function panic() {
@@ -56,7 +58,7 @@
   $effect(() => {
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest?.("input, textarea, select");
-      if (e.key === "Escape" && !typing) {
+      if (e.key === "Escape" && !typing && !showsOpen) {
         e.preventDefault();
         panic();
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "a") {
@@ -75,6 +77,11 @@
       <span class="logo">◐</span> DeckLight
       <span class="dot" class:on={conn.connected} title={conn.connected ? "Verbunden" : "Keine Verbindung zum Kern"}></span>
     </div>
+
+    <button class="showname" onclick={() => (showsOpen = true)} title="Shows speichern, öffnen, sichern">
+      <span class="label">Show</span>
+      {conn.show?.name || "Ohne Namen"} ▾
+    </button>
 
     <div class="tc" class:running={s?.timecode.running} title="Timecode-Ausgang">
       <span class="tcval">{s?.timecode.enabled ? (s?.timecode.text ?? "--:--:--:--") : "TC aus"}</span>
@@ -129,6 +136,7 @@
     {/if}
   </main>
   <Toast />
+  {#if showsOpen}<ShowDialog onclose={() => (showsOpen = false)} />{/if}
 </div>
 
 <style>
@@ -163,6 +171,27 @@
   }
   .dot.on {
     background: var(--ok);
+  }
+  .showname {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.15;
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    font-weight: 600;
+    max-width: 220px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .showname .label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 400;
   }
   .tc {
     display: flex;

@@ -5,7 +5,7 @@ members = ["crates/*"]
 exclude = ["src-tauri"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/Lu4pi/decklight"
@@ -28,6 +28,9 @@ tower-http = { version = "0.6", features = ["fs", "cors"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 
 decklight-prolink = { path = "crates/prolink" }
 decklight-simulator = { path = "crates/simulator" }

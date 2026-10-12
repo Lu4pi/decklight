@@ -70,6 +70,24 @@ pub enum Command {
         settings: Box<Settings>,
     },
     ClearHistory,
+    /// Laufende Show unter einem Namen speichern (ohne Namen: unter dem aktuellen).
+    ShowSave {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    ShowOpen {
+        name: String,
+    },
+    /// Leere Show; Ausgangs-Einstellungen bleiben.
+    ShowNew {
+        name: String,
+    },
+    ShowImport {
+        file: Box<crate::library::ShowFile>,
+    },
+    BackupRestore {
+        file: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

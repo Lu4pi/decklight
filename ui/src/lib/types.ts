@@ -159,6 +159,7 @@ export interface OffsetEntry {
 }
 
 export interface ShowView {
+  name: string;
   offsets: { rule: { first_hour: number; step_hours: number }; entries: OffsetEntry[] };
   triggers: TriggerTable;
   tracks: TrackSummary[];
@@ -207,4 +208,19 @@ export interface Reply {
   id?: number;
   error?: string;
   count?: number;
+}
+
+export interface ShowInfo {
+  name: string;
+  file: string;
+  saved_unix_ms: number;
+  tracks: number;
+  cues: number;
+  triggers: number;
+}
+
+export interface ShowsView {
+  current: string;
+  shows: ShowInfo[];
+  backups: ShowInfo[];
 }

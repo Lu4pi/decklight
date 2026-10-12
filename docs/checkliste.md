@@ -116,13 +116,17 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
   _Zugriffe aus dem Netz sind nur lesend (außer ausdrücklich erlaubt); mit PIN braucht es `?pin=…`._
 
 ### Phase 7: Show-Datei, Stabilität, Release
-- [ ] Show-Datei speichern/laden, Auto-Save, Backup-Kopien
-- [ ] Track-Wiedererkennung über USB-Sticks hinweg (Titel + Artist + Dauer + Hash)  
-  _Stand: Offsets hängen an Artist + Titel + Dauer und wandern beim Laden der Metadaten mit; Hash folgt._
-- [ ] Dauerlauftest 4 h mit Simulator, CPU/RAM-Messung
+- [x] Show-Datei speichern/laden, Auto-Save, Backup-Kopien  
+  _`.decklight`-Dateien mit Offsets, Cues, Triggern und Ausgängen; laufende Show alle 5 s gesichert, Sicherung alle 5 min (30 bleiben); Show-Dialog mit Import/Export._
+- [x] Track-Wiedererkennung über USB-Sticks hinweg (Titel + Artist + Dauer + Hash)  
+  _Fingerabdruck aus Beatgrid und Wellenform: Offsets und Cues folgen dem Track auch nach geänderten Tags._
+- [ ] Dauerlauftest 4 h mit Simulator, CPU/RAM-Messung  
+  _`decklight soak --minutes 240` (Simulator → Kern → Art-Net, OSC, WebSocket); Kurzlauf in der CI auf allen drei Systemen. 4-h-Lauf: läuft._
 - [ ] Test am echten Setup (CDJ-3000 + DJM), Fehlerliste abarbeiten
-- [ ] Doku: Setup in 5 Schritten, grandMA3-Anleitung (Art-Net TC + OSC einrichten), Rider-Vorlage
-- [ ] Signierte Installer macOS + Windows, GitHub Release v1.0.0
+- [x] Doku: Setup in 5 Schritten, grandMA3-Anleitung (Art-Net TC + OSC einrichten), Rider-Vorlage  
+  _[einrichtung.md](einrichtung.md), [grandma3.md](grandma3.md), [rider.md](rider.md)_
+- [ ] Signierte Installer macOS + Windows, GitHub Release v1.0.0  
+  _Workflow `release.yml` steht (Tag `v1.0.0` → signierte Installer als Release-Entwurf); es fehlen die Zertifikate als Secrets._
 
 ---
 

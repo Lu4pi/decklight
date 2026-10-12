@@ -105,3 +105,65 @@ pub struct TrackData {
     pub cues: Vec<CuePoint>,
     pub waveform: Option<Waveform>,
 }
+
+impl TrackData {
+    /// Inhalts-Fingerabdruck aus Beatgrid und Wellenform der Analyse-Dateien.
+    ///
+    /// Er bleibt gleich, wenn derselbe Track auf einem anderen USB-Stick liegt oder
+    /// seine Tags (Titel, Artist) geändert wurden, und ändert sich erst, wenn
+    /// rekordbox den Track neu analysiert. `None`, wenn es weder Grid noch
+    /// Wellenform gibt.
+    pub fn fingerprint(&self) -> Option<String> {
+        let wave = self.waveform.as_ref().filter(|w| !w.columns.is_empty());
+        if self.beat_grid.len() < 8 && wave.is_none() {
+            return None;
+        }
+        // FNV-1a, 64 Bit: stabil über Versionen und Plattformen.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |bytes: &[u8]| {
+            for b in bytes {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+        };
+        for b in &self.beat_grid {
+            eat(&b.time_ms.to_le_bytes());
+            eat(&[b.beat_in_bar]);
+        }
+        eat(b"|");
+        if let Some(w) = wave {
+            for c in &w.columns {
+                eat(&[c.height, c.rgb[0], c.rgb[1], c.rgb[2]]);
+            }
+        }
+        Some(format!("{h:016x}"))
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn fingerprint_ignores_tags_and_follows_content() {
+        let grid: Vec<GridBeat> = (0..64)
+            .map(|i| GridBeat {
+                time_ms: 500 * i,
+                beat_in_bar: (i % 4) as u8 + 1,
+                bpm: 120.0,
+            })
+            .collect();
+        let a = TrackData {
+            beat_grid: grid.clone(),
+            ..Default::default()
+        };
+        let mut b = a.clone();
+        b.metadata.title = "Anderer Titel".into();
+        assert_eq!(a.fingerprint(), b.fingerprint());
+        assert_eq!(a.fingerprint().unwrap().len(), 16);
+        let mut c = a.clone();
+        c.beat_grid[3].time_ms += 1;
+        assert_ne!(a.fingerprint(), c.fingerprint());
+        assert_eq!(TrackData::default().fingerprint(), None);
+    }
+}

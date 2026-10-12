@@ -1,9 +1,9 @@
 //! `decklight serve`: Kern plus Webserver mit Oberfläche, `/monitor` und `/overlay`.
 
 use anyhow::Result;
-use decklight_server::files::{load, Persist};
+use decklight_server::files::{load, load_working_copy, Persist};
 use decklight_server::settings::Settings;
-use decklight_server::{App, Server, ServerConfig, ShowData, DEFAULT_PORT};
+use decklight_server::{App, Server, ServerConfig, DEFAULT_PORT};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,12 +11,9 @@ use std::time::Duration;
 
 #[derive(clap::Args)]
 pub struct ServeArgs {
-    /// Einstellungen (JSON). Wird angelegt und bei Änderungen gespeichert.
-    #[arg(long, default_value = "decklight-settings.json")]
-    settings: PathBuf,
-    /// Show-Daten (Offsets, Cues, Trigger) als JSON. Wird alle 5 s gesichert.
-    #[arg(long, default_value = "decklight-show.json")]
-    show: PathBuf,
+    /// Ordner für Einstellungen, laufende Show, Show-Dateien und Sicherungen.
+    #[arg(long, default_value = "decklight-data")]
+    data_dir: PathBuf,
     /// Port des Webservers.
     #[arg(long, default_value_t = DEFAULT_PORT)]
     port: u16,
@@ -38,7 +35,9 @@ pub struct ServeArgs {
 }
 
 pub async fn serve(args: ServeArgs) -> Result<()> {
-    let mut settings: Settings = load(&args.settings)?;
+    let settings_path = args.data_dir.join("settings.json");
+    let show_path = args.data_dir.join("show.json");
+    let mut settings: Settings = load(&settings_path)?;
     if args.passive {
         settings.network.passive = true;
     }
@@ -48,8 +47,10 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
     if let Some(p) = args.db_port {
         settings.network.db_port = p;
     }
-    let show: ShowData = load(&args.show)?;
+    let (name, show) = load_working_copy(&show_path)?;
     let app = App::start(settings, show).await?;
+    app.set_show_name(&name);
+    app.set_library(&args.data_dir);
     let ip = if args.local_only {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     } else {
@@ -67,15 +68,11 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         "DeckLight läuft: http://127.0.0.1:{0}/  Monitor: /monitor  Overlay: /overlay",
         server.addr.port()
     );
-    let persist = Arc::new(Persist::new(app, args.settings.clone(), args.show.clone()));
+    let persist = Arc::new(Persist::new(app, settings_path, show_path));
     let task = tokio::spawn(persist.clone().run(Duration::from_secs(5)));
     tokio::signal::ctrl_c().await?;
     task.abort();
     persist.save(true)?;
-    eprintln!(
-        "Gespeichert: {}, {}",
-        args.show.display(),
-        args.settings.display()
-    );
+    eprintln!("Gespeichert in {}", args.data_dir.display());
     Ok(())
 }

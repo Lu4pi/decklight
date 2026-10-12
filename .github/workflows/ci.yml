@@ -32,6 +32,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test --all
+      - name: Kurzer Dauerlauf mit Simulator
+        run: cargo run -p decklight -- soak --minutes 2 --sample-secs 5 --out soak.csv
 
   ui:
     name: Oberfläche
