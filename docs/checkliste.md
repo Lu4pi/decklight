@@ -74,13 +74,20 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [ ] **Meilenstein:** MA3 fährt eine Timecode-Show synchron zu einem echten oder simulierten CDJ
 
 ### Phase 4: Trigger
-- [ ] Datenmodell Cue (Track, Position ms oder Takt/Beat, Vorlauf, Aktionen, Farbe, Name)
-- [ ] Cue auslösen nur bei Master-Deck oder bei jedem Deck (einstellbar)
-- [ ] Rekordbox-Hot-Cues als Cue-Vorlage übernehmen
-- [ ] Globale Trigger (Track geladen, Master-Wechsel, Play, Stop)
-- [ ] Arm/Disarm pro Cue und global, Not-Aus-Taste (Tastenkürzel)
-- [ ] Aktions-Log mit Zeitstempel
-- [ ] Tests: kein doppeltes Auslösen bei Pause/Scrubben, korrektes Verhalten bei Rücksprung
+- [x] Datenmodell Cue (Track, Position ms oder Takt/Beat, Vorlauf, Aktionen, Farbe, Name)  
+  _`crates/show/src/cues.rs`; Aktionen: grandMA3-Befehl über `/cmd`, beliebige OSC-Adresse, MIDI Note/CC/Program; Platzhalter `{deck}`._
+- [x] Cue auslösen nur bei Master-Deck oder bei jedem Deck (einstellbar)  
+  _Global und je Cue überschreibbar._
+- [x] Rekordbox-Hot-Cues als Cue-Vorlage übernehmen  
+  _Hot und Memory Cues neuer Tracks werden als Cues ohne Aktion angelegt, solange der Track noch keine eigenen hat._
+- [x] Globale Trigger (Track geladen, Master-Wechsel, Play, Stop)  
+  _Dazu On Air/Off Air; Filter: jedes Deck, Master-Deck oder ein bestimmtes Deck._
+- [x] Arm/Disarm pro Cue und global, Not-Aus-Taste (Tastenkürzel)  
+  _`Core::panic()`/`set_armed()`; in `decklight run`: n + Enter = Not-Aus, s + Enter = scharf. Tastenkürzel in der Oberfläche folgt in Phase 5._
+- [x] Aktions-Log mit Zeitstempel  
+  _Ringpuffer mit Uhrzeit, Deck, Quelle, Aktionen, Verspätung und Fehler; CSV-Export._
+- [x] Tests: kein doppeltes Auslösen bei Pause/Scrubben, korrektes Verhalten bei Rücksprung  
+  _Unit-Tests in `crates/triggers`; `crates/triggers/tests/simulated_show.rs` vergleicht 5 min Simulator mit Jitter gegen den echten Playhead (CDJ-3000 max. 3 ms, NXS2 max. 5 ms im Lauf, identische Cue-Folge); `crates/core/tests/triggers_e2e.rs` misst OSC über UDP (± 3 ms)._
 
 ### Phase 5: Oberfläche
 - [ ] Design-System (Farben, Schrift, Deck-Farben, Dark Mode)

@@ -1,0 +1,20 @@
+[package]
+name = "decklight-triggers"
+description = "Cue-Punkte und globale Trigger auswerten: wann welche Aktion ausgelöst wird"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+decklight-engine.workspace = true
+decklight-library.workspace = true
+decklight-show.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+decklight-prolink.workspace = true
+decklight-simulator.workspace = true
+
+[lints]
+workspace = true

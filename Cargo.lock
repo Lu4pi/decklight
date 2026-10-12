@@ -288,6 +288,7 @@ dependencies = [
  "decklight-prolink",
  "decklight-show",
  "decklight-simulator",
+ "decklight-triggers",
  "serde",
  "serde_json",
  "tokio",
@@ -358,6 +359,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "decklight-triggers"
+version = "0.1.0"
+dependencies = [
+ "decklight-engine",
+ "decklight-library",
+ "decklight-prolink",
+ "decklight-show",
+ "decklight-simulator",
+ "serde",
 ]
 
 [[package]]
