@@ -7,7 +7,7 @@ Erste Version für den Einsatz am echten Setup.
 - **PRO DJ LINK:** erkennt CDJ-3000, CDJ-2000NXS2, XDJ und DJM-Mixer, meldet sich
   als virtueller Player (5–15, nie 1–4), liest Status, Beats und Fader-Stellungen.
 - **Decks:** farbige Wellenform (Übersicht und Detail), Beatgrid, Rekordbox-Cues,
-  Titel, Artist, Cover, BPM, Pitch, Key, Rest­zeit, On-Air und Master.
+  Titel, Artist, Cover, BPM, Pitch, Key, Restzeit, On-Air und Master.
 - **Timecode:** Art-Net-Timecode und MTC vom Master-Deck, eine Stunde je Track
   (automatisch oder von Hand, CSV), folgt Pitch, Sprüngen, Loops und Rückwärtslauf.
 - **Trigger:** Cues an Zeit oder Takt/Schlag mit Vorlauf, globale Trigger bei
