@@ -20,7 +20,11 @@ pub fn write_record(w: &mut impl Write, rec: &InputRecord) -> io::Result<()> {
 
 pub fn read_records(r: impl BufRead) -> io::Result<Vec<InputRecord>> {
     let lines: Vec<String> = r.lines().collect::<io::Result<_>>()?;
-    let lines: Vec<&str> = lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
     let mut out = Vec::with_capacity(lines.len());
     for (i, line) in lines.iter().enumerate() {
         match serde_json::from_str(line) {
