@@ -30,6 +30,10 @@ Mit echten Playern: `decklight interfaces` zeigt die Netzwerkschnittstellen,
 `decklight watch --iface en5` meldet DeckLight als virtuellen Player 7 an (nie 1–4)
 und zeigt alle Decks. Ohne Anmeldung (`--passive`) schicken echte CDJs keinen Status.
 
+Mitschnitte vom echten Setup: `decklight record show.jsonl` speichert alle
+Pakete, `decklight replay show.jsonl` spielt sie durch die Engine und gibt die
+Ereignisse (Track geladen, Play, Sprünge, Master-Wechsel) als JSON aus.
+
 Eigene Abläufe für den Simulator: `decklight scenario > meine-show.json`, Datei
 anpassen, dann `decklight simulate --scenario meine-show.json`.
 
@@ -38,6 +42,7 @@ anpassen, dann `decklight simulate --scenario meine-show.json`.
 | Pfad | Inhalt |
 |---|---|
 | `crates/prolink` | PRO DJ LINK: Pakete lesen/schreiben, Geräteerkennung, virtueller Player |
+| `crates/engine` | Deck-Zustand, Timecode-Uhr mit Jitterfilter, Master-Auswahl, Ereignisse |
 | `crates/simulator` | Virtuelle CDJs und DJM mit echten Paketen, Szenarien als JSON |
 | `crates/app` | Kommandozeile `decklight` |
 | `ui/` | Svelte-5-Oberfläche (Desktop, Monitor, Overlay) |

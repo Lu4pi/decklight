@@ -56,6 +56,8 @@ pub struct SimDeck {
     pub master: bool,
     pub on_air: bool,
     pub loop_range: Option<(f64, f64)>,
+    /// CDJ-3000 senden präzise Positionen, ältere Modelle nicht.
+    pub precise_position: bool,
     packet_counter: u32,
 }
 
@@ -73,6 +75,7 @@ impl SimDeck {
             master: false,
             on_air: false,
             loop_range: None,
+            precise_position: true,
             packet_counter: 0,
         }
     }
@@ -212,7 +215,19 @@ impl SimDeck {
         }
     }
 
+    /// Ein Modell ohne präzise Positionspakete (z. B. CDJ-2000NXS2).
+    pub fn legacy(number: u8, ip: Ipv4Addr) -> Self {
+        Self {
+            name: "CDJ-2000NXS2".into(),
+            precise_position: false,
+            ..Self::new(number, ip)
+        }
+    }
+
     pub fn precise_position(&self) -> Option<PrecisePosition> {
+        if !self.precise_position {
+            return None;
+        }
         let t = self.track.as_ref()?;
         Some(PrecisePosition {
             name: self.name.clone(),

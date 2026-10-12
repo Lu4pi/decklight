@@ -20,6 +20,7 @@ fn one_deck(steps: Vec<(u64, Command)>) -> Simulator {
         decks: 1,
         mixer: false,
         repeat_after_ms: None,
+        legacy_decks: Vec::new(),
         steps: steps
             .into_iter()
             .map(|(at_ms, command)| Step { at_ms, command })

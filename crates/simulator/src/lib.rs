@@ -62,7 +62,13 @@ impl Simulator {
 
     fn reset(&mut self) {
         self.decks = (1..=self.scenario.decks.clamp(1, 6))
-            .map(|n| SimDeck::new(n, self.ip))
+            .map(|n| {
+                if self.scenario.legacy_decks.contains(&n) {
+                    SimDeck::legacy(n, self.ip)
+                } else {
+                    SimDeck::new(n, self.ip)
+                }
+            })
             .collect();
         self.time_ms = 0.0;
         self.next_step = 0;

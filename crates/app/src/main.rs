@@ -25,7 +25,15 @@ enum Cmd {
     /// Netzwerkschnittstellen auflisten.
     Interfaces,
     /// Geräte und Decks live anzeigen.
-    Watch(watch::Args),
+    Watch(watch::WatchArgs),
+    /// Alle PRO-DJ-LINK-Pakete in eine Datei mitschneiden (JSON Lines).
+    Record(watch::RecordArgs),
+    /// Mitschnitt durch die Engine spielen und die Ereignisse ausgeben.
+    Replay {
+        file: std::path::PathBuf,
+        #[arg(long, default_value = "on-air")]
+        master: String,
+    },
     /// Virtuelle CDJs und DJM starten (Standard: nur an diesen Rechner).
     Simulate {
         /// Ziel-IP. 127.0.0.1 hält die Pakete auf diesem Rechner.
@@ -75,7 +83,9 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        Cmd::Watch(args) => watch::run(args).await?,
+        Cmd::Watch(args) => watch::watch(args).await?,
+        Cmd::Record(args) => watch::record(args).await?,
+        Cmd::Replay { file, master } => watch::replay_file(file, &master)?,
         Cmd::Simulate {
             target,
             port_base,
