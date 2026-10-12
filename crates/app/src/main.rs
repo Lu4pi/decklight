@@ -2,6 +2,7 @@
 
 mod run;
 mod serve;
+mod soak;
 mod watch;
 
 use anyhow::{bail, Context, Result};
@@ -56,6 +57,8 @@ enum Cmd {
     },
     /// Oberfläche und Webserver starten (Desktop-Browser, /monitor, /overlay).
     Serve(serve::ServeArgs),
+    /// Dauerlauf mit simulierten CDJs: CPU, RAM und Durchsatz messen.
+    Soak(soak::SoakArgs),
     /// Timecode (Art-Net, MTC) live vom Master-Deck ausgeben.
     Run(run::RunArgs),
     /// Einen OSC-Befehl senden, z. B. zum Testen der grandMA3-Verbindung.
@@ -162,6 +165,7 @@ async fn main() -> Result<()> {
         }
         Cmd::Run(args) => run::run(args).await?,
         Cmd::Serve(args) => serve::serve(args).await?,
+        Cmd::Soak(args) => soak::soak(args).await?,
         Cmd::Osc {
             to,
             prefix,

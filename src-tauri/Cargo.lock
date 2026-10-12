@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "decklight-engine",
  "decklight-library",
@@ -643,7 +643,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-desktop"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "decklight-server",
  "serde",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-engine"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "decklight-prolink",
  "serde",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-library"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -675,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-outputs"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "midir",
  "rosc",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-prolink"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "if-addrs",
  "mac_address",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-show"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "decklight-outputs",
  "serde",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "decklight-triggers"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "decklight-engine",
  "decklight-library",
