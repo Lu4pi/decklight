@@ -116,10 +116,15 @@ impl Engine {
                 }
                 out
             }
-            LinkEvent::NumberConflict { number, other } => {
+            LinkEvent::NumberConflict {
+                number,
+                other,
+                switched_to,
+            } => {
                 vec![EngineEvent::NumberConflict {
                     number: *number,
                     name: other.name.clone(),
+                    switched_to: *switched_to,
                 }]
             }
             LinkEvent::Packet { packet, .. } => self.handle_packet(t, packet),

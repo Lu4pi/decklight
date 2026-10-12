@@ -8,6 +8,7 @@ use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -182,6 +183,8 @@ pub enum LinkEvent {
     NumberConflict {
         number: u8,
         other: Device,
+        /// Auf diese freie Nummer ist DeckLight ausgewichen.
+        switched_to: Option<u8>,
     },
     Packet {
         from: SocketAddr,
@@ -197,6 +200,7 @@ pub struct Link {
     devices: Arc<Mutex<DeviceTable>>,
     tasks: Vec<JoinHandle<()>>,
     local_ports: PortConfig,
+    own_number: Arc<AtomicU8>,
 }
 
 impl Link {
@@ -214,11 +218,14 @@ impl Link {
             status: status.local_addr()?.port(),
         };
 
-        let own = config.virtual_player.as_ref().map(|v| (v.number, v.ip));
+        let own_number = Arc::new(AtomicU8::new(
+            config.virtual_player.as_ref().map_or(0, |v| v.number),
+        ));
         let ctx = Ctx {
             events: events.clone(),
             devices: devices.clone(),
-            own,
+            own_ip: config.virtual_player.as_ref().map(|v| v.ip),
+            own_number: own_number.clone(),
         };
         tasks.push(tokio::spawn(receive(
             ctx.clone(),
@@ -250,6 +257,7 @@ impl Link {
                 vp,
                 target,
                 devices.clone(),
+                own_number.clone(),
             )));
         }
 
@@ -258,6 +266,7 @@ impl Link {
             devices,
             tasks,
             local_ports,
+            own_number,
         })
     }
 
@@ -270,6 +279,15 @@ impl Link {
     }
 
     /// Tatsächlich gebundene Ports (relevant, wenn mit Port 0 gestartet wurde).
+    /// Aktuelle eigene Player-Nummer (kann nach einem Konflikt wechseln), ohne
+    /// virtuellen Player `None`.
+    pub fn own_number(&self) -> Option<u8> {
+        match self.own_number.load(Ordering::Relaxed) {
+            0 => None,
+            n => Some(n),
+        }
+    }
+
     pub fn local_ports(&self) -> PortConfig {
         self.local_ports
     }
@@ -289,7 +307,8 @@ impl Drop for Link {
 struct Ctx {
     events: broadcast::Sender<LinkEvent>,
     devices: Arc<Mutex<DeviceTable>>,
-    own: Option<(u8, Ipv4Addr)>,
+    own_ip: Option<Ipv4Addr>,
+    own_number: Arc<AtomicU8>,
 }
 
 fn bind_udp(ip: Ipv4Addr, port: u16) -> io::Result<UdpSocket> {
@@ -319,7 +338,7 @@ async fn receive(ctx: Ctx, socket: Arc<UdpSocket>, channel: Channel) {
         };
         let at = Instant::now();
         if let Packet::KeepAlive(ka) = &packet {
-            if ctx.own == Some((ka.number, ka.ip)) {
+            if ctx.own_ip == Some(ka.ip) && ctx.own_number.load(Ordering::Relaxed) == ka.number {
                 continue; // unser eigenes Echo
             }
             note_keep_alive(&ctx, ka, at);
@@ -341,10 +360,23 @@ fn note_keep_alive(ctx: &Ctx, ka: &KeepAlive, at: Instant) {
             new
         }
     };
-    if ctx.own.is_some_and(|(n, _)| n == device.number) {
+    let own = ctx.own_number.load(Ordering::Relaxed);
+    if ctx.own_ip.is_some() && own == device.number {
+        // Das andere Gerät war zuerst da oder ist ein echter Player: ausweichen.
+        let taken: Vec<u8> = ctx
+            .devices
+            .lock()
+            .map(|t| t.list().iter().map(|d| d.number).collect())
+            .unwrap_or_default();
+        let switched_to = free_number(&taken, own);
+        if let Some(n) = switched_to {
+            ctx.own_number.store(n, Ordering::Relaxed);
+            tracing::warn!(from = own, to = n, other = %device.name, "Player-Nummer belegt, weiche aus");
+        }
         let _ = ctx.events.send(LinkEvent::NumberConflict {
             number: device.number,
             other: device.clone(),
+            switched_to,
         });
     }
     tracing::info!(number = device.number, name = %device.name, ip = %device.ip, "Gerät erkannt");
@@ -366,19 +398,65 @@ async fn expire(ctx: Ctx, timeout: Duration) {
     }
 }
 
+/// Erst zuhören, welche Nummern belegt sind, dann eine freie nehmen.
+pub const LISTEN_BEFORE_ANNOUNCE: Duration = Duration::from_millis(1800);
+
+/// Freie virtuelle Player-Nummer: die gewünschte, sonst die nächste aus 5–15.
+/// Nummern 1–4 bleiben echten Playern vorbehalten.
+pub fn free_number(taken: &[u8], wanted: u8) -> Option<u8> {
+    let free = |n: u8| !taken.contains(&n);
+    if !(1..=4).contains(&wanted) && free(wanted) {
+        return Some(wanted);
+    }
+    let start = wanted.clamp(5, 15);
+    (start..=15).chain(5..start).find(|&n| free(n))
+}
+
 async fn announce_loop(
     socket: Arc<UdpSocket>,
-    vp: VirtualPlayer,
+    mut vp: VirtualPlayer,
     target: SocketAddrV4,
     devices: Arc<Mutex<DeviceTable>>,
+    own_number: Arc<AtomicU8>,
 ) {
+    tokio::time::sleep(LISTEN_BEFORE_ANNOUNCE).await;
+    let wanted = own_number.load(Ordering::Relaxed);
+    let taken: Vec<u8> = devices
+        .lock()
+        .map(|t| t.list().iter().map(|d| d.number).collect())
+        .unwrap_or_default();
+    if taken.contains(&wanted) {
+        if let Some(n) = free_number(&taken, wanted) {
+            tracing::warn!(
+                from = wanted,
+                to = n,
+                "Player-Nummer schon belegt, nehme eine freie"
+            );
+            own_number.store(n, Ordering::Relaxed);
+        }
+    }
     let mut tick = tokio::time::interval(KEEP_ALIVE_INTERVAL);
     loop {
         tick.tick().await;
+        vp.number = own_number.load(Ordering::Relaxed);
         let peers = devices.lock().map(|t| t.len()).unwrap_or(0);
         let bytes = encode::keep_alive(&vp.keep_alive(u8::try_from(peers + 1).unwrap_or(u8::MAX)));
         if let Err(e) = socket.send_to(&bytes, target).await {
             tracing::warn!(error = %e, %target, "Keep-Alive konnte nicht gesendet werden");
         }
+    }
+}
+
+#[cfg(test)]
+mod number_tests {
+    use super::free_number;
+
+    #[test]
+    fn picks_wanted_or_next_free_and_never_one_to_four() {
+        assert_eq!(free_number(&[1, 2, 3, 4], 7), Some(7));
+        assert_eq!(free_number(&[1, 2, 7], 7), Some(8));
+        assert_eq!(free_number(&[7, 8, 9, 10, 11, 12, 13, 14, 15], 7), Some(5));
+        assert_eq!(free_number(&[], 3), Some(5));
+        assert_eq!(free_number(&(5..=15).collect::<Vec<_>>(), 7), None);
     }
 }

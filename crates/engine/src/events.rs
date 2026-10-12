@@ -20,6 +20,8 @@ pub enum EngineEvent {
     NumberConflict {
         number: u8,
         name: String,
+        #[serde(default)]
+        switched_to: Option<u8>,
     },
     TrackLoaded {
         deck: u8,

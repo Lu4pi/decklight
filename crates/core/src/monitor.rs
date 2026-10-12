@@ -88,9 +88,17 @@ impl Monitor {
                     format!("{name} (#{number}) nicht mehr erreichbar"),
                 );
             }
-            EngineEvent::NumberConflict { number, name } => self.warn(
+            EngineEvent::NumberConflict {
+                number,
+                name,
+                switched_to: Some(n),
+            } => self.warn(
+                Level::Warning,
+                format!("{name} benutzt Player-Nummer {number}; DeckLight ist auf {n} ausgewichen"),
+            ),
+            EngineEvent::NumberConflict { number, name, .. } => self.warn(
                 Level::Error,
-                format!("{name} benutzt dieselbe Player-Nummer {number} wie DeckLight"),
+                format!("{name} benutzt dieselbe Player-Nummer {number} wie DeckLight, keine Nummer frei"),
             ),
             EngineEvent::MasterChanged { to: None, .. } => {
                 self.warn(Level::Warning, "Kein Master-Deck: Timecode steht");
