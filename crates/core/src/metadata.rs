@@ -98,6 +98,17 @@ async fn fetch(
             }
             Err(e) => {
                 tracing::warn!(attempt, player = r.source_player, id = r.rekordbox_id, error = %e, "Metadaten nicht geladen");
+                if attempt == ATTEMPTS {
+                    if let Ok(mut s) = shared.lock() {
+                        s.monitor.warn(
+                            crate::monitor::Level::Warning,
+                            format!(
+                                "Metadaten für Track {} von Player {} nicht geladen: {e}",
+                                r.rekordbox_id, r.source_player
+                            ),
+                        );
+                    }
+                }
                 tokio::time::sleep(Duration::from_secs(u64::from(attempt))).await;
             }
         }

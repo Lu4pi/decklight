@@ -1,6 +1,7 @@
 //! Startet und verbindet alle Teile.
 
 use crate::metadata::{self, FetchRequest};
+use crate::monitor::{Level, Monitor};
 use crate::timecode_out::{self, TimecodeOutConfig, TimecodeStatus, TimecodeThread};
 use crate::triggers_out::{self, ActionOutConfig, Manual, TriggerThread};
 use decklight_engine::{ClockConfig, Engine, EngineEvent, MasterMode, Stamped, TrackRef};
@@ -60,6 +61,9 @@ pub struct Shared {
     pub keys: HashMap<TrackRef, TrackKey>,
     pub triggers: TriggerTable,
     pub trigger_log: ActionLog,
+    pub monitor: Monitor,
+    /// Seit wann das Master-Deck ohne Metadaten läuft (für die History).
+    unnamed_since: Option<(TrackRef, f64)>,
 }
 
 impl Shared {
@@ -78,7 +82,12 @@ pub struct Core {
     events: broadcast::Sender<Stamped>,
     link: Link,
     tasks: Vec<JoinHandle<()>>,
-    manual: Mutex<std::sync::mpsc::Sender<Manual>>,
+    outputs: Mutex<Outputs>,
+}
+
+/// Ausgangs-Threads; werden bei geänderten Einstellungen neu gestartet.
+struct Outputs {
+    manual: std::sync::mpsc::Sender<Manual>,
     _timecode: Option<TimecodeThread>,
     _triggers: TriggerThread,
 }
@@ -94,6 +103,8 @@ impl Core {
             keys: HashMap::new(),
             triggers: cfg.triggers,
             trigger_log: ActionLog::default(),
+            monitor: Monitor::default(),
+            unnamed_since: None,
         }));
         let (events, _) = broadcast::channel(4096);
         let own_number = cfg.link.virtual_player.as_ref().map_or(0, |v| v.number);
@@ -134,7 +145,11 @@ impl Core {
                 tick.tick().await;
                 let t = epoch.elapsed().as_secs_f64();
                 let out = match sh.lock() {
-                    Ok(mut s) => handle(&mut s, &ftx, |e| e.tick(t)),
+                    Ok(mut s) => {
+                        let out = handle(&mut s, &ftx, |e| e.tick(t));
+                        record_history(&mut s, t);
+                        out
+                    }
                     Err(_) => return,
                 };
                 for event in out {
@@ -152,27 +167,28 @@ impl Core {
                 .unwrap_or(decklight_library::dbserver::QUERY_PORT),
         )));
 
-        let timecode = cfg
-            .timecode
-            .map(|tc| timecode_out::spawn(tc, epoch, shared.clone()));
-        let (manual, manual_rx) = std::sync::mpsc::channel();
-        let triggers = triggers_out::spawn(
-            cfg.actions,
-            epoch,
-            shared.clone(),
-            events.clone(),
-            manual_rx,
-        );
+        let outputs = Outputs::spawn(cfg.timecode, cfg.actions, epoch, &shared, &events);
         Ok(Self {
             epoch,
             shared,
             events,
             link,
             tasks,
-            manual: Mutex::new(manual),
-            _timecode: timecode,
-            _triggers: triggers,
+            outputs: Mutex::new(outputs),
         })
+    }
+
+    /// Timecode- und Aktionsausgänge mit neuen Einstellungen neu starten.
+    pub fn set_outputs(&self, timecode: Option<TimecodeOutConfig>, actions: ActionOutConfig) {
+        if let Ok(mut o) = self.outputs.lock() {
+            // Erst die alten Threads beenden, damit MIDI-Ports frei werden.
+            *o = Outputs {
+                manual: std::sync::mpsc::channel().0,
+                _timecode: None,
+                _triggers: TriggerThread::idle(),
+            };
+            *o = Outputs::spawn(timecode, actions, self.epoch, &self.shared, &self.events);
+        }
     }
 
     /// Sekunden seit Start (Zeitbasis aller Ereignisse).
@@ -216,14 +232,21 @@ impl Core {
             .unwrap_or(false);
         if changed {
             tracing::info!(armed, "Trigger");
+            self.with(|s| {
+                if armed {
+                    s.monitor.warn(Level::Info, "Trigger wieder scharf");
+                } else {
+                    s.monitor.warn(Level::Warning, "Not-Aus: Trigger gesperrt");
+                }
+            });
             self.publish(EngineEvent::ArmedChanged { armed });
         }
     }
 
     /// Aktionen sofort senden (Test-Button, Cue von Hand). Läuft auch bei Not-Aus.
     pub fn fire(&self, name: &str, deck: Option<u8>, actions: Vec<Action>) {
-        if let Ok(tx) = self.manual.lock() {
-            let _ = tx.send(Manual {
+        if let Ok(o) = self.outputs.lock() {
+            let _ = o.manual.send(Manual {
                 name: name.to_string(),
                 deck,
                 actions,
@@ -245,6 +268,54 @@ impl Drop for Core {
     }
 }
 
+impl Outputs {
+    fn spawn(
+        timecode: Option<TimecodeOutConfig>,
+        actions: ActionOutConfig,
+        epoch: Instant,
+        shared: &Arc<Mutex<Shared>>,
+        events: &broadcast::Sender<Stamped>,
+    ) -> Self {
+        let timecode = timecode.map(|tc| timecode_out::spawn(tc, epoch, shared.clone()));
+        let (manual, manual_rx) = std::sync::mpsc::channel();
+        let triggers =
+            triggers_out::spawn(actions, epoch, shared.clone(), events.clone(), manual_rx);
+        Self {
+            manual,
+            _timecode: timecode,
+            _triggers: triggers,
+        }
+    }
+}
+
+/// So lange spielt ein Track ohne Metadaten, bevor er trotzdem in die History kommt.
+const UNNAMED_AFTER_S: f64 = 5.0;
+
+/// Läuft das Master-Deck, kommt sein Track in die History.
+fn record_history(s: &mut Shared, t: f64) {
+    let Some(n) = s.engine.master() else { return };
+    let Some(deck) = s.engine.deck(n) else { return };
+    let (Some(track), true) = (deck.track, deck.moving) else {
+        return;
+    };
+    let key = s.key_for(&track);
+    if let Some(data) = s.track_data(&track) {
+        s.unnamed_since = None;
+        let (title, artist) = (data.metadata.title.clone(), data.metadata.artist.clone());
+        s.monitor.played(n, key, &title, &artist);
+        return;
+    }
+    match s.unnamed_since {
+        Some((r, since)) if r == track => {
+            if t - since >= UNNAMED_AFTER_S {
+                let title = format!("Track {}", track.rekordbox_id);
+                s.monitor.played(n, key, &title, "");
+            }
+        }
+        _ => s.unnamed_since = Some((track, t)),
+    }
+}
+
 /// Engine-Aufruf plus Folgeschritte, die Show-Daten brauchen.
 fn handle(
     s: &mut Shared,
@@ -253,6 +324,7 @@ fn handle(
 ) -> Vec<EngineEvent> {
     let out = f(&mut s.engine);
     for e in &out {
+        s.monitor.observe(e);
         if let EngineEvent::TrackLoaded { deck, track } = e {
             let key = s.key_for(track);
             let label = s

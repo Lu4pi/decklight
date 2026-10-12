@@ -1,34 +1,22 @@
 <script lang="ts">
-  // Platzhalter bis zum Webserver (Phase 6): zeigt den Verbindungsstatus zum Kern.
-  let connected = $state(false);
+  // Einstieg: /monitor und /overlay sind eigene Vollbild-Ansichten, sonst die App.
+  import { conn } from "./lib/conn.svelte";
+  import Main from "./pages/Main.svelte";
+  import Monitor from "./pages/Monitor.svelte";
+  import Overlay from "./pages/Overlay.svelte";
+
+  const path = location.pathname.replace(/\/+$/, "");
+  const view = path.endsWith("/overlay") ? "overlay" : path.endsWith("/monitor") ? "monitor" : "main";
 
   $effect(() => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onopen = () => (connected = true);
-    ws.onclose = () => (connected = false);
-    return () => ws.close();
+    conn.start();
   });
 </script>
 
-<main>
-  <h1>DeckLight</h1>
-  <p class:ok={connected}>{connected ? "Mit dem Kern verbunden" : "Warte auf den DeckLight-Kern …"}</p>
-</main>
-
-<style>
-  main {
-    padding: 2rem;
-  }
-  h1 {
-    margin: 0 0 0.5rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-  }
-  p {
-    color: var(--text-dim);
-  }
-  p.ok {
-    color: var(--ok);
-  }
-</style>
+{#if view === "overlay"}
+  <Overlay />
+{:else if view === "monitor"}
+  <Monitor />
+{:else}
+  <Main />
+{/if}

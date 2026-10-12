@@ -67,8 +67,8 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] OSC-Client (UDP), Ziel-IP/Port/Präfix konfigurierbar, `/cmd` mit Befehlstext
 - [x] MIDI Note/CC als Aktion  
   _Stand: Nachrichten und Ausgang fertig; Auslösen über Trigger folgt in Phase 4._
-- [ ] Track-Offsets: automatische Vergabe, Editor, CSV-Import/Export  
-  _Stand: Automatik und CSV fertig (`decklight run --offsets`); Editor folgt mit der Oberfläche._
+- [x] Track-Offsets: automatische Vergabe, Editor, CSV-Import/Export  
+  _Automatik und CSV (`decklight run --offsets`), Editor in der Oberfläche unter „Setlist & Offsets“._
 - [ ] Test mit grandMA3 onPC: Timecode-Show auf zwei Tracks programmieren, Deck-Wechsel, Pitch ±8 %, Loop  
   _Automatischer Ersatz: `crates/core/tests/timecode_e2e.rs` (simulierter CDJ → Art-Net-Empfänger, jeder Frame zur richtigen Zeit). Test am echten Pult steht aus._
 - [ ] **Meilenstein:** MA3 fährt eine Timecode-Show synchron zu einem echten oder simulierten CDJ
@@ -83,28 +83,37 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Globale Trigger (Track geladen, Master-Wechsel, Play, Stop)  
   _Dazu On Air/Off Air; Filter: jedes Deck, Master-Deck oder ein bestimmtes Deck._
 - [x] Arm/Disarm pro Cue und global, Not-Aus-Taste (Tastenkürzel)  
-  _`Core::panic()`/`set_armed()`; in `decklight run`: n + Enter = Not-Aus, s + Enter = scharf. Tastenkürzel in der Oberfläche folgt in Phase 5._
+  _`Core::panic()`/`set_armed()`; Oberfläche: Esc = Not-Aus, Strg/Cmd+Umschalt+A = scharf; `decklight run`: n/s + Enter._
 - [x] Aktions-Log mit Zeitstempel  
   _Ringpuffer mit Uhrzeit, Deck, Quelle, Aktionen, Verspätung und Fehler; CSV-Export._
 - [x] Tests: kein doppeltes Auslösen bei Pause/Scrubben, korrektes Verhalten bei Rücksprung  
   _Unit-Tests in `crates/triggers`; `crates/triggers/tests/simulated_show.rs` vergleicht 5 min Simulator mit Jitter gegen den echten Playhead (CDJ-3000 max. 3 ms, NXS2 max. 5 ms im Lauf, identische Cue-Folge); `crates/core/tests/triggers_e2e.rs` misst OSC über UDP (± 3 ms)._
 
 ### Phase 5: Oberfläche
-- [ ] Design-System (Farben, Schrift, Deck-Farben, Dark Mode)
-- [ ] Deck-Kachel: Cover, Titel, Artist, BPM, Pitch, Key, Zeit, Restzeit, Zustand
-- [ ] Übersichts-Wellenform + scrollende Detail-Wellenform mit Beatgrid und Cue-Markern (60 fps)
-- [ ] On-Air/Master-Hervorhebung, großer Timecode-Zähler
-- [ ] Setlist-/Offset-Ansicht
-- [ ] Cue-Editor direkt auf der Wellenform (klicken = Cue setzen, Aktion wählen)
-- [ ] Ausgänge-Seite (Art-Net, MTC, OSC, MIDI) mit Test-Button
-- [ ] Monitoring-Panel: Geräte, Warnungen, Netzwerk, Log
-- [ ] Track-History mit CSV-Export
+- [x] Design-System (Farben, Schrift, Deck-Farben, Dark Mode)  
+  _`ui/src/theme.css`: dunkles Grundthema, eine Farbe je Deck, Monospace für Zeiten._
+- [x] Deck-Kachel: Cover, Titel, Artist, BPM, Pitch, Key, Zeit, Restzeit, Zustand
+- [x] Übersichts-Wellenform + scrollende Detail-Wellenform mit Beatgrid und Cue-Markern (60 fps)  
+  _Canvas mit requestAnimationFrame; der Playhead wird zwischen den Zustands-Frames weitergerechnet._
+- [x] On-Air/Master-Hervorhebung, großer Timecode-Zähler
+- [x] Setlist-/Offset-Ansicht  
+  _Doppelklick auf einen Offset zum Ändern, CSV-Import/Export._
+- [x] Cue-Editor direkt auf der Wellenform (klicken = Cue setzen, Aktion wählen)  
+  _Mit Einrasten auf Beats, Zoom, Takt/Schlag-Positionen, Vorlauf, Farbe, Test-Auslösen; globale Trigger im selben Reiter._
+- [x] Ausgänge-Seite (Art-Net, MTC, OSC, MIDI) mit Test-Button  
+  _Dazu Netzwerkschnittstelle, Player-Nummer und PIN; Netz-Änderungen starten die Verbindung neu, Show-Daten bleiben._
+- [x] Monitoring-Panel: Geräte, Warnungen, Netzwerk, Log
+- [x] Track-History mit CSV-Export
 
 ### Phase 6: Webserver und Overlay
-- [ ] axum-Server, WebSocket-Stream des Zustands
-- [ ] `/monitor`: Vollbild-Ansicht für Handy/Tablet
-- [ ] `/overlay`: transparentes Overlay (aktueller Track, Cover, BPM, Fortschritt), Themes per URL-Parameter
-- [ ] Optional PIN-Schutz, nur lesend
+- [x] axum-Server, WebSocket-Stream des Zustands  
+  _`crates/server`: 40 Zustands-Frames/s, Ereignisse, Monitoring 2×/s, Show-Daten bei Änderung; Test `crates/server/tests/server.rs` misst ≥ 30 Frames/s._
+- [x] `/monitor`: Vollbild-Ansicht für Handy/Tablet  
+  _Hält den Bildschirm wach (Wake Lock)._
+- [x] `/overlay`: transparentes Overlay (aktueller Track, Cover, BPM, Fortschritt), Themes per URL-Parameter  
+  _`?theme=dark|light|glass&layout=card|bar&deck=master|1…6&accent=ff8a1f&hide=cover,bpm,progress,artist`._
+- [x] Optional PIN-Schutz, nur lesend  
+  _Zugriffe aus dem Netz sind nur lesend (außer ausdrücklich erlaubt); mit PIN braucht es `?pin=…`._
 
 ### Phase 7: Show-Datei, Stabilität, Release
 - [ ] Show-Datei speichern/laden, Auto-Save, Backup-Kopien

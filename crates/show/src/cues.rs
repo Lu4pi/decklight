@@ -253,6 +253,10 @@ impl TriggerTable {
         id
     }
 
+    pub fn cue(&self, id: u32) -> Option<&Cue> {
+        self.tracks.values().flatten().find(|c| c.id == id)
+    }
+
     pub fn cue_mut(&mut self, id: u32) -> Option<&mut Cue> {
         self.tracks.values_mut().flatten().find(|c| c.id == id)
     }

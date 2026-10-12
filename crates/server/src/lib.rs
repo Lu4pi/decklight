@@ -1,0 +1,760 @@
+//! Webserver von DeckLight.
+//!
+//! Liefert die Oberfläche aus (Desktop-App, `/monitor`, `/overlay`) und streamt den
+//! Zustand per WebSocket (`/ws`): 40 Zustands-Frames pro Sekunde, alle Ereignisse,
+//! zweimal pro Sekunde Monitoring-Daten und die Show-Daten bei jeder Änderung.
+//! Befehle (`POST /api/command`) nimmt er nur vom eigenen Rechner an, außer es ist
+//! ausdrücklich erlaubt. Mit PIN brauchen Zugriffe aus dem Netz `?pin=…`.
+
+pub mod command;
+pub mod files;
+pub mod settings;
+pub mod view;
+
+use anyhow::{Context, Result};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use command::{Command, Reply};
+use decklight_core::Core;
+use decklight_show::{OffsetTable, TrackKey, TriggerTable};
+use serde::{Deserialize, Serialize};
+use settings::Settings;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
+use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
+
+pub use command::Command as UiCommand;
+pub use settings::{NetworkSettings, WebSettings};
+
+pub const DEFAULT_PORT: u16 = 8750;
+
+/// Show-Daten, die einen Neustart des Kerns überleben.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ShowData {
+    #[serde(default)]
+    pub offsets: OffsetTable,
+    #[serde(default)]
+    pub triggers: TriggerTable,
+}
+
+/// Laufender Kern plus Einstellungen. Wird von Server und Desktop-App geteilt.
+pub struct App {
+    core: RwLock<Arc<Core>>,
+    settings: Mutex<Settings>,
+    events: broadcast::Sender<Arc<str>>,
+    forwarder: Mutex<Option<JoinHandle<()>>>,
+    restart: tokio::sync::Mutex<()>,
+}
+
+impl App {
+    pub async fn start(settings: Settings, show: ShowData) -> Result<Arc<Self>> {
+        let core = match start_core(&settings, show.clone()).await {
+            Ok(c) => c,
+            Err(e) if !settings.network.passive => {
+                // Ohne passende Schnittstelle trotzdem starten, damit die Oberfläche
+                // erreichbar bleibt und man die Einstellung korrigieren kann.
+                tracing::warn!(error = %format!("{e:#}"), "Start als virtueller Player fehlgeschlagen, nur zuhören");
+                let mut fallback = settings.clone();
+                fallback.network.passive = true;
+                let core = start_core(&fallback, show).await?;
+                core.with(|s| {
+                    s.monitor.warn(
+                        decklight_core::Level::Error,
+                        format!("{e:#}. DeckLight hört nur zu, bis unter Ausgänge eine Schnittstelle gewählt ist."),
+                    )
+                });
+                core
+            }
+            Err(e) => return Err(e),
+        };
+        let (events, _) = broadcast::channel(1024);
+        let app = Arc::new(Self {
+            core: RwLock::new(core),
+            settings: Mutex::new(settings),
+            events,
+            forwarder: Mutex::new(None),
+            restart: tokio::sync::Mutex::new(()),
+        });
+        app.forward_events();
+        Ok(app)
+    }
+
+    pub fn core(&self) -> Arc<Core> {
+        self.core
+            .read()
+            .map(|c| c.clone())
+            .unwrap_or_else(|e| e.into_inner().clone())
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.settings
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|e| e.into_inner().clone())
+    }
+
+    pub fn show_data(&self) -> ShowData {
+        self.core()
+            .with(|s| ShowData {
+                offsets: s.offsets.clone(),
+                triggers: s.triggers.clone(),
+            })
+            .unwrap_or_default()
+    }
+
+    /// Ereignisse des aktuellen Kerns als fertiges JSON an alle Clients.
+    fn forward_events(self: &Arc<Self>) {
+        let mut rx = self.core().subscribe();
+        let tx = self.events.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(ev) => {
+                        if let Ok(json) = serde_json::to_string(&Tagged {
+                            kind: "event",
+                            body: &ev,
+                        }) {
+                            let _ = tx.send(json.into());
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(_) => return,
+                }
+            }
+        });
+        if let Ok(mut f) = self.forwarder.lock() {
+            if let Some(old) = f.replace(task) {
+                old.abort();
+            }
+        }
+    }
+
+    /// Neue Einstellungen übernehmen. Netz-Änderungen starten den Kern neu,
+    /// Show-Daten bleiben erhalten.
+    pub async fn update_settings(self: &Arc<Self>, new: Settings) -> Result<()> {
+        let _guard = self.restart.lock().await;
+        let old = self.settings();
+        if old.needs_restart(&new) {
+            new.link_config()?;
+            let show = self.show_data();
+            let master_mode = new.master_mode;
+            // Platzhalter einsetzen, alten Kern freigeben, dann neu starten.
+            let previous = {
+                let placeholder = start_core(&passive_placeholder(), ShowData::default()).await?;
+                let mut c = self.core.write().map_err(|_| anyhow::anyhow!("Sperre"))?;
+                std::mem::replace(&mut *c, placeholder)
+            };
+            wait_until_unique(&previous).await;
+            drop(previous);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let core = match start_core(&new, show.clone()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    // Mit den alten Einstellungen weiterlaufen.
+                    let c = start_core(&old, show).await?;
+                    self.swap_core(c);
+                    return Err(e);
+                }
+            };
+            core.with(|s| s.engine.set_master_mode(master_mode));
+            self.swap_core(core);
+        } else {
+            let core = self.core();
+            core.set_outputs(new.timecode_config(), new.actions.clone());
+            core.with(|s| s.engine.set_master_mode(new.master_mode));
+        }
+        if let Ok(mut s) = self.settings.lock() {
+            *s = new;
+        }
+        Ok(())
+    }
+
+    fn swap_core(self: &Arc<Self>, core: Arc<Core>) {
+        if let Ok(mut c) = self.core.write() {
+            *c = core;
+        }
+        self.forward_events();
+    }
+}
+
+/// Kern ohne Netzwerkzugriff für die kurze Zeit eines Neustarts.
+fn passive_placeholder() -> Settings {
+    let mut s = Settings::default();
+    s.network.passive = true;
+    s.network.port_base = 0;
+    s.timecode_enabled = false;
+    s
+}
+
+async fn wait_until_unique(core: &Arc<Core>) {
+    for _ in 0..50 {
+        if Arc::strong_count(core) == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn start_core(settings: &Settings, show: ShowData) -> Result<Arc<Core>> {
+    let mut cfg = settings.core_config()?;
+    if settings.network.port_base == 0 {
+        cfg.link.ports = decklight_prolink::PortConfig {
+            announce: 0,
+            beat: 0,
+            status: 0,
+        };
+    }
+    cfg.offsets = show.offsets;
+    cfg.triggers = show.triggers;
+    let mut last = None;
+    // Nach einem Neustart sind die alten Ports eventuell noch kurz belegt.
+    for _ in 0..10 {
+        match Core::start(cfg.clone()).await {
+            Ok(c) => return Ok(Arc::new(c)),
+            Err(e) => {
+                last = Some(e);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+    Err(last.map_or_else(|| anyhow::anyhow!("Start fehlgeschlagen"), Into::into))
+        .context("PRO-DJ-LINK-Ports konnten nicht geöffnet werden")
+}
+
+#[derive(Serialize)]
+struct Tagged<'a, T: Serialize> {
+    #[serde(rename = "type")]
+    kind: &'a str,
+    #[serde(flatten)]
+    body: T,
+}
+
+fn tagged<T: Serialize>(kind: &str, body: T) -> String {
+    serde_json::to_string(&Tagged { kind, body }).unwrap_or_default()
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    pub bind: SocketAddr,
+    /// Gebaute Oberfläche (`ui/dist`). Ohne: nur API und Hinweisseite.
+    pub ui_dir: Option<PathBuf>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
+            ui_dir: None,
+        }
+    }
+}
+
+pub struct Server {
+    pub addr: SocketAddr,
+    task: JoinHandle<()>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl Server {
+    pub async fn start(app: Arc<App>, cfg: ServerConfig) -> Result<Self> {
+        let listener = tokio::net::TcpListener::bind(cfg.bind)
+            .await
+            .with_context(|| format!("Webserver: {} belegt", cfg.bind))?;
+        let addr = listener.local_addr()?;
+        let router = router(app, cfg.ui_dir);
+        let task = tokio::spawn(async move {
+            if let Err(e) = axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            {
+                tracing::error!(error = %e, "Webserver beendet");
+            }
+        });
+        tracing::info!(%addr, "Webserver läuft");
+        Ok(Self { addr, task })
+    }
+}
+
+pub fn router(app: Arc<App>, ui_dir: Option<PathBuf>) -> Router {
+    let api = Router::new()
+        .route("/ws", get(ws))
+        .route("/api/state", get(api_state))
+        .route("/api/show", get(api_show))
+        .route("/api/monitor", get(api_monitor))
+        .route("/api/track/{key}", get(api_track))
+        .route("/api/artwork/{key}", get(api_artwork))
+        .route("/api/command", post(api_command))
+        .route("/api/settings", get(api_settings))
+        .route("/api/interfaces", get(api_interfaces))
+        .route("/api/midi-ports", get(api_midi_ports))
+        .route("/api/history.csv", get(csv_history))
+        .route("/api/log.csv", get(csv_log))
+        .route("/api/offsets.csv", get(csv_offsets))
+        .with_state(app)
+        .layer(desktop_cors());
+    match ui_dir.filter(|d| d.join("index.html").is_file()) {
+        Some(dir) => {
+            let index = dir.join("index.html");
+            api.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+        }
+        None => api.fallback(no_ui),
+    }
+}
+
+/// Die Desktop-App lädt die Oberfläche von `tauri://localhost` und spricht von
+/// dort mit diesem Server; andere fremde Seiten bekommen keine CORS-Freigabe.
+fn desktop_cors() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            matches!(
+                origin.as_bytes(),
+                b"tauri://localhost" | b"http://tauri.localhost" | b"https://tauri.localhost"
+            )
+        }))
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers([header::CONTENT_TYPE])
+}
+
+async fn no_ui() -> Html<&'static str> {
+    Html(
+        "<!doctype html><meta charset=utf-8><title>DeckLight</title>\
+         <body style=\"background:#0b0d10;color:#e6e8eb;font-family:system-ui;padding:2rem\">\
+         <h1>DeckLight</h1><p>Die Oberfläche ist nicht gebaut (<code>cd ui &amp;&amp; npm run build</code>). \
+         Die Schnittstelle läuft: <a style=color:#7cc4ff href=/api/state>/api/state</a>, <code>/ws</code>.</p>",
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Denied,
+    ReadOnly,
+    Control,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PinQuery {
+    pin: Option<String>,
+}
+
+fn access(app: &App, peer: SocketAddr, pin: Option<&str>) -> Access {
+    if peer.ip().is_loopback() {
+        return Access::Control;
+    }
+    let web = app.settings().web;
+    if let Some(expected) = web.pin.as_deref().filter(|p| !p.is_empty()) {
+        if pin != Some(expected) {
+            return Access::Denied;
+        }
+    }
+    if web.allow_lan_control {
+        Access::Control
+    } else {
+        Access::ReadOnly
+    }
+}
+
+fn pin_of<'a>(q: &'a PinQuery, headers: &'a HeaderMap) -> Option<&'a str> {
+    q.pin
+        .as_deref()
+        .or_else(|| headers.get("x-decklight-pin").and_then(|v| v.to_str().ok()))
+}
+
+/// Abgelehnter Zugriff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rejected {
+    NeedPin,
+    ReadOnly,
+}
+
+impl IntoResponse for Rejected {
+    fn into_response(self) -> Response {
+        match self {
+            Rejected::NeedPin => (StatusCode::UNAUTHORIZED, "PIN erforderlich").into_response(),
+            Rejected::ReadOnly => (
+                StatusCode::FORBIDDEN,
+                "Nur lesend: Befehle gehen nur vom DeckLight-Rechner",
+            )
+                .into_response(),
+        }
+    }
+}
+
+/// Prüft den Zugriff.
+fn guard(
+    app: &App,
+    peer: SocketAddr,
+    q: &PinQuery,
+    headers: &HeaderMap,
+    need_control: bool,
+) -> Result<Access, Rejected> {
+    match access(app, peer, pin_of(q, headers)) {
+        Access::Denied => Err(Rejected::NeedPin),
+        Access::ReadOnly if need_control => Err(Rejected::ReadOnly),
+        a => Ok(a),
+    }
+}
+
+type Peer = ConnectInfo<SocketAddr>;
+
+async fn ws(
+    upgrade: WebSocketUpgrade,
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let access = match guard(&app, peer, &q, &headers, false) {
+        Ok(a) => a,
+        Err(r) => return r.into_response(),
+    };
+    upgrade.on_upgrade(move |socket| client(socket, app, access == Access::ReadOnly))
+}
+
+#[derive(Serialize)]
+struct Hello {
+    version: &'static str,
+    readonly: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settings: Option<Settings>,
+}
+
+async fn client(mut socket: WebSocket, app: Arc<App>, readonly: bool) {
+    let hello = tagged(
+        "hello",
+        Hello {
+            version: env!("CARGO_PKG_VERSION"),
+            readonly,
+            settings: (!readonly).then(|| app.settings()),
+        },
+    );
+    if socket.send(Message::Text(hello.into())).await.is_err() {
+        return;
+    }
+    let mut events = app.events.subscribe();
+    // 40 Frames/s; verspätete Ticks werden nachgeholt, damit es im Mittel
+    // auch bei grobem Timer (Windows) über 30/s bleibt.
+    let mut frame = tokio::time::interval(Duration::from_millis(25));
+    frame.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+    let mut slow = tokio::time::interval(Duration::from_millis(500));
+    slow.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_show = String::new();
+    let mut last_settings = String::new();
+
+    loop {
+        let msg: Option<String> = tokio::select! {
+            _ = frame.tick() => {
+                let core = app.core();
+                let enabled = app.settings().timecode_enabled;
+                let t = core.now();
+                core.with(|s| tagged("state", view::state(s, t, enabled)))
+            }
+            _ = slow.tick() => {
+                let core = app.core();
+                let mut out = core.with(|s| tagged("monitor", view::monitor(s)));
+                let show = core.with(|s| tagged("show", view::show(s))).unwrap_or_default();
+                if show != last_show {
+                    if socket.send(Message::Text(show.clone().into())).await.is_err() {
+                        return;
+                    }
+                    last_show = show;
+                }
+                if !readonly {
+                    let settings = tagged("settings", app.settings());
+                    if settings != last_settings {
+                        last_settings = settings.clone();
+                        if socket.send(Message::Text(settings.into())).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                out.take()
+            }
+            ev = events.recv() => match ev {
+                Ok(json) => Some(json.to_string()),
+                Err(broadcast::error::RecvError::Lagged(_)) => None,
+                Err(_) => return,
+            },
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
+                _ => None,
+            },
+        };
+        if let Some(text) = msg {
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+macro_rules! guarded {
+    ($app:expr, $peer:expr, $q:expr, $headers:expr, $control:expr) => {
+        if let Err(r) = guard(&$app, $peer, &$q, &$headers, $control) {
+            return r.into_response();
+        }
+    };
+}
+
+async fn api_state(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    let core = app.core();
+    let t = core.now();
+    let enabled = app.settings().timecode_enabled;
+    Json(core.with(|s| view::state(s, t, enabled))).into_response()
+}
+
+async fn api_show(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    Json(app.core().with(|s| view::show(s))).into_response()
+}
+
+async fn api_monitor(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    Json(app.core().with(|s| view::monitor(s))).into_response()
+}
+
+async fn api_track(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    match app
+        .core()
+        .with(|s| view::track_detail(s, &TrackKey(key)))
+        .flatten()
+    {
+        Some(d) => Json(d).into_response(),
+        None => (StatusCode::NOT_FOUND, "Track unbekannt").into_response(),
+    }
+}
+
+async fn api_artwork(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    let art = app
+        .core()
+        .with(|s| s.tracks.get(&TrackKey(key)).and_then(|d| d.artwork.clone()))
+        .flatten();
+    match art {
+        Some(bytes) => {
+            let mime = if bytes.starts_with(b"\x89PNG") {
+                "image/png"
+            } else {
+                "image/jpeg"
+            };
+            (
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (header::CACHE_CONTROL, "max-age=3600"),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "kein Cover").into_response(),
+    }
+}
+
+async fn api_command(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+    Json(cmd): Json<Command>,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    let reply = match cmd {
+        Command::UpdateSettings { settings } => match app.update_settings(*settings).await {
+            Ok(()) => Reply::ok(),
+            Err(e) => Reply::err(format!("{e:#}")),
+        },
+        other => {
+            let rate = app.settings().timecode.generator.rate;
+            command::apply(&app.core(), other, rate)
+        }
+    };
+    let status = if reply.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (status, Json(reply)).into_response()
+}
+
+async fn api_settings(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    Json(app.settings()).into_response()
+}
+
+#[derive(Serialize)]
+struct InterfaceView {
+    name: String,
+    ip: String,
+    broadcast: String,
+}
+
+async fn api_interfaces(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    let list: Vec<InterfaceView> = decklight_prolink::interfaces()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| InterfaceView {
+            name: i.name,
+            ip: i.ip.to_string(),
+            broadcast: i.broadcast.to_string(),
+        })
+        .collect();
+    Json(list).into_response()
+}
+
+async fn api_midi_ports(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    let ports = decklight_outputs::midi::output_ports().unwrap_or_default();
+    Json(ports).into_response()
+}
+
+fn csv(name: &str, body: String) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\""),
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+async fn csv_history(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    csv(
+        "decklight-history.csv",
+        app.core()
+            .with(|s| s.monitor.history_csv())
+            .unwrap_or_default(),
+    )
+}
+
+async fn csv_log(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    csv(
+        "decklight-log.csv",
+        app.core()
+            .with(|s| s.trigger_log.to_csv())
+            .unwrap_or_default(),
+    )
+}
+
+async fn csv_offsets(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, false);
+    let rate = app.settings().timecode.generator.rate;
+    csv(
+        "decklight-offsets.csv",
+        app.core()
+            .with(|s| s.offsets.to_csv(rate))
+            .unwrap_or_default(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pin_and_read_only_access() {
+        let mut settings = Settings::default();
+        settings.network.passive = true;
+        settings.network.port_base = 0;
+        settings.timecode_enabled = false;
+        let app = App::start(settings.clone(), ShowData::default())
+            .await
+            .unwrap();
+        let local: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let lan: SocketAddr = "192.168.1.20:5000".parse().unwrap();
+        assert_eq!(access(&app, local, None), Access::Control);
+        assert_eq!(access(&app, lan, None), Access::ReadOnly);
+
+        let mut s = settings;
+        s.web.pin = Some("4711".into());
+        app.update_settings(s.clone()).await.unwrap();
+        assert_eq!(access(&app, lan, None), Access::Denied);
+        assert_eq!(access(&app, lan, Some("0000")), Access::Denied);
+        assert_eq!(access(&app, lan, Some("4711")), Access::ReadOnly);
+        assert_eq!(access(&app, local, None), Access::Control);
+
+        s.web.allow_lan_control = true;
+        app.update_settings(s).await.unwrap();
+        assert_eq!(access(&app, lan, Some("4711")), Access::Control);
+    }
+}
