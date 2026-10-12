@@ -1,3 +1,64 @@
 # DeckLight
 
-Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs. Lizenz: GPL-3.0-or-later.
+Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das Netz
+überwachen und eine grandMA3 per Timecode und OSC synchron zur Musik fahren.
+
+> Status: frühe Entwicklung (v0.1). Geräteerkennung, Status-Pakete und Simulator
+> laufen; Engine, Timecode-Ausgänge, Trigger und Oberfläche folgen Phase für Phase
+> (siehe [docs/checkliste.md](docs/checkliste.md)).
+
+## Was DeckLight v1 können soll
+
+- **Sehen:** alle Decks mit Wellenform, Playhead, Titel, Artist, Cover, BPM, Pitch,
+  Key, Restzeit und On-Air-Anzeige.
+- **Überwachen:** Geräte, Netzwerk, Track-History, Warnungen.
+- **Triggern:** Art-Net-Timecode und MTC je Track mit eigenem Offset, Cue-Punkte mit
+  OSC-Befehlen (`/cmd`) an die grandMA3, MIDI Note/CC.
+- **Overlay:** `/monitor` fürs Tablet, `/overlay` für OBS und Streams.
+
+## Schnellstart ohne Hardware
+
+```sh
+# Terminal 1: zwei virtuelle CDJ-3000 und ein DJM, nur auf diesem Rechner
+cargo run -p decklight -- simulate
+
+# Terminal 2: Decks live anzeigen
+cargo run -p decklight -- watch --passive
+```
+
+Mit echten Playern: `decklight interfaces` zeigt die Netzwerkschnittstellen,
+`decklight watch --iface en5` meldet DeckLight als virtuellen Player 7 an (nie 1–4)
+und zeigt alle Decks. Ohne Anmeldung (`--passive`) schicken echte CDJs keinen Status.
+
+Eigene Abläufe für den Simulator: `decklight scenario > meine-show.json`, Datei
+anpassen, dann `decklight simulate --scenario meine-show.json`.
+
+## Aufbau
+
+| Pfad | Inhalt |
+|---|---|
+| `crates/prolink` | PRO DJ LINK: Pakete lesen/schreiben, Geräteerkennung, virtueller Player |
+| `crates/simulator` | Virtuelle CDJs und DJM mit echten Paketen, Szenarien als JSON |
+| `crates/app` | Kommandozeile `decklight` |
+| `ui/` | Svelte-5-Oberfläche (Desktop, Monitor, Overlay) |
+| `src-tauri/` | Tauri-2-Hülle für macOS, Windows, Linux |
+| `docs/` | Checkliste, Protokoll-Referenzen |
+
+## Entwickeln
+
+Voraussetzungen: Rust (stable), Node 22. Unter Linux für die Desktop-App zusätzlich
+`libwebkit2gtk-4.1-dev librsvg2-dev`.
+
+```sh
+cargo test --all                         # Kern
+cargo clippy --all-targets -- -D warnings
+cd ui && npm ci && npm run check && npm run build
+cargo build --manifest-path src-tauri/Cargo.toml   # Desktop-Hülle
+```
+
+## Lizenz und Dank
+
+GPL-3.0-or-later. Das Protokollwissen stammt aus der
+[DJ Link Ecosystem Analysis](https://djl-analysis.deepsymmetry.org/) von Deep
+Symmetry (James Elliott) und den Projekten beat-link und beat-link-trigger.
+DeckLight ist nicht mit Pioneer DJ, AlphaTheta oder TC Supply verbunden.
