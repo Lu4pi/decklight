@@ -1,5 +1,6 @@
 //! Kommandozeile von DeckLight.
 
+mod run;
 mod watch;
 
 use anyhow::{bail, Context, Result};
@@ -49,6 +50,21 @@ enum Cmd {
         #[arg(long)]
         allow_network: bool,
     },
+    /// Timecode (Art-Net, MTC) live vom Master-Deck ausgeben.
+    Run(run::RunArgs),
+    /// Einen OSC-Befehl senden, z. B. zum Testen der grandMA3-Verbindung.
+    Osc {
+        /// Ziel, z. B. 192.168.1.50:8000
+        #[arg(long)]
+        to: std::net::SocketAddr,
+        /// Präfix aus den OSC-Einstellungen des Pults, z. B. /gma3
+        #[arg(long, default_value = "")]
+        prefix: String,
+        /// Befehlstext, z. B. "Go+ Exec 201"
+        command: String,
+    },
+    /// MIDI-Ausgänge auflisten.
+    MidiPorts,
     /// Demo-Ablaufplan als JSON ausgeben (Vorlage für eigene Szenarien).
     Scenario,
 }
@@ -118,6 +134,20 @@ async fn main() -> Result<()> {
             tokio::select! {
                 r = decklight_simulator::run(sim, target, Duration::from_millis(5)) => r?,
                 _ = tokio::signal::ctrl_c() => {}
+            }
+        }
+        Cmd::Run(args) => run::run(args).await?,
+        Cmd::Osc {
+            to,
+            prefix,
+            command,
+        } => {
+            decklight_outputs::osc::OscSender::new(to, &prefix)?.command(&command)?;
+            eprintln!("Gesendet an {to}: \"{command}\"");
+        }
+        Cmd::MidiPorts => {
+            for p in decklight_outputs::midi::output_ports()? {
+                println!("{p}");
             }
         }
         Cmd::Scenario => println!("{}", serde_json::to_string_pretty(&Scenario::demo())?),

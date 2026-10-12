@@ -30,6 +30,11 @@ Mit echten Playern: `decklight interfaces` zeigt die Netzwerkschnittstellen,
 `decklight watch --iface en5` meldet DeckLight als virtuellen Player 7 an (nie 1–4)
 und zeigt alle Decks. Ohne Anmeldung (`--passive`) schicken echte CDJs keinen Status.
 
+Timecode fürs Pult: `decklight run --artnet 2.255.255.255 --fps 25 --offsets offsets.csv`
+sendet Art-Net-Timecode vom Master-Deck, jeder Track bekommt eine eigene Stunde.
+`decklight osc --to 192.168.1.50:8000 --prefix gma3 "Go+ Exec 201"` testet die
+OSC-Verbindung. Einrichtung am Pult: [docs/grandma3.md](docs/grandma3.md).
+
 Mitschnitte vom echten Setup: `decklight record show.jsonl` speichert alle
 Pakete, `decklight replay show.jsonl` spielt sie durch die Engine und gibt die
 Ereignisse (Track geladen, Play, Sprünge, Master-Wechsel) als JSON aus.
@@ -43,6 +48,9 @@ anpassen, dann `decklight simulate --scenario meine-show.json`.
 |---|---|
 | `crates/prolink` | PRO DJ LINK: Pakete lesen/schreiben, Geräteerkennung, virtueller Player |
 | `crates/engine` | Deck-Zustand, Timecode-Uhr mit Jitterfilter, Master-Auswahl, Ereignisse |
+| `crates/outputs` | Timecode-Rechnung, Art-Net-Timecode, MTC, OSC, MIDI |
+| `crates/show` | Show-Daten: Track-Offsets mit CSV-Import/Export |
+| `crates/core` | Laufzeit: verbindet Netz, Engine, Show und Ausgänge |
 | `crates/simulator` | Virtuelle CDJs und DJM mit echten Paketen, Szenarien als JSON |
 | `crates/app` | Kommandozeile `decklight` |
 | `ui/` | Svelte-5-Oberfläche (Desktop, Monitor, Overlay) |
@@ -52,7 +60,7 @@ anpassen, dann `decklight simulate --scenario meine-show.json`.
 ## Entwickeln
 
 Voraussetzungen: Rust (stable), Node 22. Unter Linux für die Desktop-App zusätzlich
-`libwebkit2gtk-4.1-dev librsvg2-dev`.
+`libwebkit2gtk-4.1-dev librsvg2-dev libasound2-dev`.
 
 ```sh
 cargo test --all                         # Kern

@@ -58,7 +58,7 @@ pub fn parse_master(s: &str) -> Result<MasterMode> {
     })
 }
 
-async fn start_link(net: &NetArgs) -> Result<Link> {
+pub fn link_config(net: &NetArgs) -> Result<LinkConfig> {
     let virtual_player = if net.passive {
         None
     } else {
@@ -71,13 +71,17 @@ async fn start_link(net: &NetArgs) -> Result<Link> {
         );
         Some(VirtualPlayer::on_interface(&iface, net.player))
     };
-    Link::start(LinkConfig {
+    Ok(LinkConfig {
         ports: PortConfig::from_base(net.port_base),
         virtual_player,
         ..Default::default()
     })
-    .await
-    .context("PRO-DJ-LINK-Ports konnten nicht geöffnet werden")
+}
+
+async fn start_link(net: &NetArgs) -> Result<Link> {
+    Link::start(link_config(net)?)
+        .await
+        .context("PRO-DJ-LINK-Ports konnten nicht geöffnet werden")
 }
 
 pub async fn watch(args: WatchArgs) -> Result<()> {
