@@ -8,6 +8,7 @@
 
 pub mod command;
 pub mod files;
+pub mod library;
 pub mod settings;
 pub mod view;
 
@@ -53,6 +54,8 @@ pub struct App {
     events: broadcast::Sender<Arc<str>>,
     forwarder: Mutex<Option<JoinHandle<()>>>,
     restart: tokio::sync::Mutex<()>,
+    library: Mutex<Option<Arc<library::Library>>>,
+    show_name: Mutex<String>,
 }
 
 impl App {
@@ -83,6 +86,8 @@ impl App {
             events,
             forwarder: Mutex::new(None),
             restart: tokio::sync::Mutex::new(()),
+            library: Mutex::new(None),
+            show_name: Mutex::new("Neue Show".into()),
         });
         app.forward_events();
         Ok(app)
@@ -109,6 +114,51 @@ impl App {
                 triggers: s.triggers.clone(),
             })
             .unwrap_or_default()
+    }
+
+    /// Ordner für Show-Dateien und Sicherungen.
+    pub fn set_library(&self, dir: impl Into<PathBuf>) {
+        if let Ok(mut l) = self.library.lock() {
+            *l = Some(Arc::new(library::Library::new(dir)));
+        }
+    }
+
+    pub fn library(&self) -> Option<Arc<library::Library>> {
+        self.library.lock().ok().and_then(|l| l.clone())
+    }
+
+    pub fn show_name(&self) -> String {
+        self.show_name.lock().map(|n| n.clone()).unwrap_or_default()
+    }
+
+    pub fn set_show_name(&self, name: &str) {
+        if let Ok(mut n) = self.show_name.lock() {
+            *n = name.to_string();
+        }
+    }
+
+    /// Laufende Show als Datei (mit Ausgangs-Einstellungen).
+    pub fn show_file(&self) -> library::ShowFile {
+        library::ShowFile::new(
+            &self.show_name(),
+            self.show_data(),
+            Some(library::OutputSettings::from_settings(&self.settings())),
+        )
+    }
+
+    /// Show-Daten ersetzen; mit Ausgangs-Einstellungen werden diese übernommen.
+    pub async fn load_show(self: &Arc<Self>, file: library::ShowFile) -> Result<()> {
+        file.check()?;
+        if let Some(out) = &file.outputs {
+            self.update_settings(out.apply_to(&self.settings())).await?;
+        }
+        let show = file.show;
+        self.core().with(move |s| {
+            s.offsets = show.offsets;
+            s.triggers = show.triggers;
+        });
+        self.set_show_name(&file.name);
+        Ok(())
     }
 
     /// Ereignisse des aktuellen Kerns als fertiges JSON an alle Clients.
@@ -306,6 +356,8 @@ pub fn router(app: Arc<App>, ui_dir: Option<PathBuf>) -> Router {
         .route("/api/history.csv", get(csv_history))
         .route("/api/log.csv", get(csv_log))
         .route("/api/offsets.csv", get(csv_offsets))
+        .route("/api/shows", get(api_shows))
+        .route("/api/shows/export", get(api_show_export))
         .with_state(app)
         .layer(desktop_cors());
     match ui_dir.filter(|d| d.join("index.html").is_file()) {
@@ -427,6 +479,13 @@ async fn ws(
 }
 
 #[derive(Serialize)]
+struct NamedShow<'a> {
+    name: &'a str,
+    #[serde(flatten)]
+    show: view::ShowView,
+}
+
+#[derive(Serialize)]
 struct Hello {
     version: &'static str,
     readonly: bool,
@@ -467,7 +526,10 @@ async fn client(mut socket: WebSocket, app: Arc<App>, readonly: bool) {
             _ = slow.tick() => {
                 let core = app.core();
                 let mut out = core.with(|s| tagged("monitor", view::monitor(s)));
-                let show = core.with(|s| tagged("show", view::show(s))).unwrap_or_default();
+                let name = app.show_name();
+                let show = core
+                    .with(|s| tagged("show", NamedShow { name: &name, show: view::show(s) }))
+                    .unwrap_or_default();
                 if show != last_show {
                     if socket.send(Message::Text(show.clone().into())).await.is_err() {
                         return;
@@ -607,6 +669,14 @@ async fn api_command(
             Ok(()) => Reply::ok(),
             Err(e) => Reply::err(format!("{e:#}")),
         },
+        c @ (Command::ShowSave { .. }
+        | Command::ShowOpen { .. }
+        | Command::ShowNew { .. }
+        | Command::ShowImport { .. }
+        | Command::BackupRestore { .. }) => match show_command(&app, c).await {
+            Ok(()) => Reply::ok(),
+            Err(e) => Reply::err(format!("{e:#}")),
+        },
         other => {
             let rate = app.settings().timecode.generator.rate;
             command::apply(&app.core(), other, rate)
@@ -618,6 +688,91 @@ async fn api_command(
         StatusCode::BAD_REQUEST
     };
     (status, Json(reply)).into_response()
+}
+
+async fn show_command(app: &Arc<App>, cmd: Command) -> Result<()> {
+    let lib = || {
+        app.library()
+            .context("Kein Ordner für Show-Dateien eingestellt")
+    };
+    match cmd {
+        Command::ShowSave { name } => {
+            let name = library::clean_name(&name.unwrap_or_else(|| app.show_name()))?;
+            app.set_show_name(&name);
+            lib()?.save(&app.show_file())?;
+        }
+        Command::ShowOpen { name } => {
+            let file = lib()?.open(&name)?;
+            app.load_show(file).await?;
+        }
+        Command::ShowNew { name } => {
+            let name = library::clean_name(&name)?;
+            app.load_show(library::ShowFile::new(&name, ShowData::default(), None))
+                .await?;
+        }
+        Command::ShowImport { file } => app.load_show(*file).await?,
+        Command::BackupRestore { file } => {
+            let show = lib()?.open_backup(&file)?;
+            let name = app.show_name();
+            app.load_show(library::ShowFile::new(&name, show, None))
+                .await?;
+        }
+        _ => anyhow::bail!("kein Show-Befehl"),
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct ShowsView {
+    current: String,
+    shows: Vec<library::ShowInfo>,
+    backups: Vec<library::ShowInfo>,
+}
+
+async fn api_shows(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    let lib = app.library();
+    Json(ShowsView {
+        current: app.show_name(),
+        shows: lib.as_ref().map(|l| l.list()).unwrap_or_default(),
+        backups: lib.as_ref().map(|l| l.backups()).unwrap_or_default(),
+    })
+    .into_response()
+}
+
+async fn api_show_export(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    let file = app.show_file();
+    let name = library::clean_name(&file.name).unwrap_or_else(|_| "show".into());
+    let body = serde_json::to_string_pretty(&file).unwrap_or_default();
+    (
+        [
+            (header::CONTENT_TYPE, "application/json".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!(
+                    "attachment; filename=\"{}.{}\"",
+                    name.replace(
+                        |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != ' ',
+                        "_"
+                    ),
+                    library::EXTENSION
+                ),
+            ),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 async fn api_settings(

@@ -209,3 +209,88 @@ async fn websocket_state_commands_and_restart() {
 
     sim.abort();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn show_files_save_open_new_import_and_backups() {
+    let dir = std::env::temp_dir().join(format!("decklight-shows-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut settings = Settings::default();
+    settings.network.passive = true;
+    settings.network.port_base = 0;
+    settings.timecode_enabled = false;
+    let app = App::start(settings, ShowData::default()).await.unwrap();
+    app.set_library(&dir);
+    app.set_show_name("Probe");
+    let server = Server::start(
+        app.clone(),
+        ServerConfig {
+            bind: SocketAddr::from(([127, 0, 0, 1], 0)),
+            ui_dir: None,
+        },
+    )
+    .await
+    .unwrap();
+    let addr = server.addr;
+    let cmd = |body: String| async move { json(addr, "POST", "/api/command", Some(&body)).await };
+
+    let cue = r#"{"cmd":"add_cue","key":"T","cue":{"id":0,"name":"Drop","position":{"type":"ms","ms":1000},"actions":[]}}"#;
+    assert_eq!(cmd(cue.into()).await.0, 200);
+    let (status, reply) = cmd(r#"{"cmd":"show_save","name":"Club Night"}"#.into()).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(app.show_name(), "Club Night");
+
+    // Neue, leere Show; danach die gespeicherte wieder öffnen.
+    assert_eq!(
+        cmd(r#"{"cmd":"show_new","name":"Leer"}"#.into()).await.0,
+        200
+    );
+    assert_eq!(app.show_data().triggers.tracks.len(), 0);
+    let (_, shows) = json(addr, "GET", "/api/shows", None).await;
+    assert_eq!(shows["current"], "Leer");
+    assert_eq!(shows["shows"][0]["name"], "Club Night");
+    assert_eq!(shows["shows"][0]["cues"], 1);
+    assert_eq!(
+        cmd(r#"{"cmd":"show_open","name":"Club Night"}"#.into())
+            .await
+            .0,
+        200
+    );
+    assert_eq!(app.show_data().triggers.tracks.len(), 1);
+    assert_eq!(
+        cmd(r#"{"cmd":"show_open","name":"../settings"}"#.into())
+            .await
+            .0,
+        400
+    );
+
+    // Export und Import über die Datei.
+    let (status, export) = json(addr, "GET", "/api/shows/export", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(export["format"], "decklight-show");
+    assert_eq!(
+        cmd(r#"{"cmd":"show_new","name":"Leer"}"#.into()).await.0,
+        200
+    );
+    let mut file = export.clone();
+    file["name"] = "Importiert".into();
+    let body = serde_json::json!({"cmd": "show_import", "file": file}).to_string();
+    assert_eq!(cmd(body).await.0, 200);
+    assert_eq!(app.show_name(), "Importiert");
+    assert_eq!(app.show_data().triggers.tracks.len(), 1);
+    file["format"] = "fremd".into();
+    let body = serde_json::json!({"cmd": "show_import", "file": file}).to_string();
+    assert_eq!(cmd(body).await.0, 400);
+
+    // Sicherung zurückholen.
+    let lib = app.library().unwrap();
+    lib.backup(&app.show_data(), Duration::ZERO).unwrap();
+    assert_eq!(
+        cmd(r#"{"cmd":"show_new","name":"Leer"}"#.into()).await.0,
+        200
+    );
+    let backup = lib.backups()[0].file.clone();
+    let body = serde_json::json!({"cmd": "backup_restore", "file": backup}).to_string();
+    assert_eq!(cmd(body).await.0, 200);
+    assert_eq!(app.show_data().triggers.tracks.len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
