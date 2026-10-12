@@ -11,6 +11,7 @@ anyhow.workspace = true
 clap.workspace = true
 decklight-core.workspace = true
 decklight-engine.workspace = true
+decklight-library.workspace = true
 decklight-outputs.workspace = true
 decklight-show.workspace = true
 decklight-prolink.workspace = true

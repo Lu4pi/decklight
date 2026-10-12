@@ -28,6 +28,12 @@ pub enum EngineEvent {
     TrackUnloaded {
         deck: u8,
     },
+    /// Metadaten (Titel, Artist, Beatgrid …) eines Tracks sind da.
+    TrackInfo {
+        track: TrackRef,
+        title: String,
+        artist: String,
+    },
     PlayStarted {
         deck: u8,
         position_ms: f64,

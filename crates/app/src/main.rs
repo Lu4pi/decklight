@@ -49,6 +49,9 @@ enum Cmd {
         /// Auch an ein echtes Netz senden (nur ohne echte Player benutzen!).
         #[arg(long)]
         allow_network: bool,
+        /// Abfrage-Port des simulierten dbservers (Metadaten, Cover, Wellen).
+        #[arg(long, default_value_t = 12523)]
+        db_port: u16,
     },
     /// Timecode (Art-Net, MTC) live vom Master-Deck ausgeben.
     Run(run::RunArgs),
@@ -107,6 +110,7 @@ async fn main() -> Result<()> {
             port_base,
             scenario,
             allow_network,
+            db_port,
         } => {
             if !target.is_loopback() && !allow_network {
                 bail!(
@@ -121,6 +125,21 @@ async fn main() -> Result<()> {
                     Scenario::from_json(&text).context("Szenario ist kein gültiges JSON")?
                 }
                 None => Scenario::demo(),
+            };
+            let library =
+                std::sync::Arc::new(decklight_simulator::SimLibrary::from_scenario(&scenario));
+            let _db = match decklight_library::dbserver::server::DbServer::start(
+                target.into(),
+                db_port,
+                library,
+            )
+            .await
+            {
+                Ok(db) => Some(db),
+                Err(e) => {
+                    eprintln!("Hinweis: dbserver auf Port {db_port} nicht gestartet ({e}); keine Metadaten.");
+                    None
+                }
             };
             let sim = Simulator::new(scenario, target);
             let target = Target {

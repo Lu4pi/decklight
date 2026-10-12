@@ -1,6 +1,7 @@
 //! `decklight watch`, `record` und `replay`: Decks live im Terminal, Mitschnitte.
 
 use anyhow::{Context, Result};
+use decklight_core::{Core, CoreConfig};
 use decklight_engine::record::{read_records, replay, write_record, InputRecord};
 use decklight_engine::{Engine, EngineSnapshot, MasterMode};
 use decklight_prolink::{
@@ -25,6 +26,9 @@ pub struct NetArgs {
     /// Erster von drei Ports (Standard 50000).
     #[arg(long, default_value_t = 50000)]
     port_base: u16,
+    /// Abfrage-Port des dbservers der Player (Standard 12523).
+    #[arg(long, default_value_t = 12523)]
+    pub db_port: u16,
 }
 
 #[derive(clap::Args)]
@@ -85,40 +89,46 @@ async fn start_link(net: &NetArgs) -> Result<Link> {
 }
 
 pub async fn watch(args: WatchArgs) -> Result<()> {
-    let link = start_link(&args.net).await?;
-    let mut events = link.subscribe();
-    let mut engine = Engine::default();
-    engine.set_master_mode(parse_master(&args.master)?);
-    let start = Instant::now();
+    let core = Core::start(CoreConfig {
+        link: link_config(&args.net)?,
+        master_mode: parse_master(&args.master)?,
+        db_query_port: Some(args.net.db_port),
+        ..Default::default()
+    })
+    .await
+    .context("PRO-DJ-LINK-Ports konnten nicht geöffnet werden")?;
+    let mut events = core.subscribe();
     let mut redraw = tokio::time::interval(Duration::from_millis(100));
     let tty = std::io::stdout().is_terminal();
 
     loop {
         tokio::select! {
             ev = events.recv() => match ev {
-                Ok(ev) => {
-                    let at = match &ev { LinkEvent::Packet { at, .. } => *at, _ => Instant::now() };
-                    let t = at.saturating_duration_since(start).as_secs_f64();
-                    for e in engine.handle_link_event(t, &ev) {
-                        if args.json {
-                            println!("{}", serde_json::to_string(&decklight_engine::Stamped { t, event: e })?);
-                        }
-                    }
-                }
+                Ok(ev) if args.json => println!("{}", serde_json::to_string(&ev)?),
+                Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(n, "Ereignisse übersprungen");
                 }
                 Err(_) => break,
             },
-            _ = redraw.tick() => {
-                let t = start.elapsed().as_secs_f64();
-                for e in engine.tick(t) {
-                    if args.json {
-                        println!("{}", serde_json::to_string(&decklight_engine::Stamped { t, event: e })?);
-                    }
-                }
-                if !args.json {
-                    draw(&engine.snapshot(t), tty)?;
+            _ = redraw.tick(), if !args.json => {
+                let t = core.now();
+                let view = core.with(|s| {
+                    let snap = s.engine.snapshot(t);
+                    let titles: Vec<String> = snap
+                        .decks
+                        .iter()
+                        .map(|d| {
+                            d.track
+                                .and_then(|r| s.track_data(&r))
+                                .map(|data| data.metadata.label())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    (snap, titles)
+                });
+                if let Some((snap, titles)) = view {
+                    draw(&snap, &titles, tty)?;
                 }
             }
             _ = tokio::signal::ctrl_c() => break,
@@ -177,7 +187,7 @@ pub fn replay_file(path: PathBuf, master: &str) -> Result<()> {
     Ok(())
 }
 
-fn draw(snap: &EngineSnapshot, tty: bool) -> Result<()> {
+fn draw(snap: &EngineSnapshot, titles: &[String], tty: bool) -> Result<()> {
     let mut out = String::new();
     if tty {
         out.push_str("\x1b[2J\x1b[H");
@@ -197,7 +207,7 @@ fn draw(snap: &EngineSnapshot, tty: bool) -> Result<()> {
         snap.master.map_or("-".into(), |m| m.to_string()),
         snap.master_mode
     ));
-    for d in &snap.decks {
+    for (i, d) in snap.decks.iter().enumerate() {
         let state = match d.play_state {
             PlayState::Unknown(b) => format!("?{b:#04x}"),
             other => format!("{other:?}"),
@@ -225,6 +235,9 @@ fn draw(snap: &EngineSnapshot, tty: bool) -> Result<()> {
             },
             if d.on_air { "ON AIR" } else { "" },
         ));
+        if let Some(title) = titles.get(i).filter(|t| !t.is_empty()) {
+            out.push_str(&format!("      {title}\n"));
+        }
     }
     if !tty {
         out.push_str("----\n");

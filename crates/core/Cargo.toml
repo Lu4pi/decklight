@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 decklight-engine.workspace = true
+decklight-library.workspace = true
 decklight-outputs.workspace = true
 decklight-prolink.workspace = true
 decklight-show.workspace = true

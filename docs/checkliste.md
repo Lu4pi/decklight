@@ -42,10 +42,13 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Beat-Pakete parsen
 - [ ] Als virtueller Player anmelden (Nummer ohne Konflikt), sauber abmelden  
   _Stand: Keep-Alive als Player 7 und Konflikterkennung fertig; Nummern-Claim-Ablauf folgt mit Hardware-Test._
-- [ ] dbserver-Client: Metadaten, Cover, Beatgrid, Wellenformen, Cues
+- [x] dbserver-Client: Metadaten, Cover, Beatgrid, Wellenformen, Cues  
+  _Stand: Client und simulierter dbserver (`decklight simulate` liefert Metadaten, Cover, Wellen, Cues). Byte-Layout nach Doku, Abgleich mit echtem CDJ steht aus._
 - [ ] Fallback: Rekordbox-Export vom USB-Stick lesen (rekordcrate)
-- [ ] Cache pro Track; Unit-Tests gegen Mitschnitte
-- [ ] **Meilenstein:** CLI zeigt live alle Decks mit Position, BPM, Titel
+- [ ] Cache pro Track; Unit-Tests gegen Mitschnitte  
+  _Stand: Cache und Tests gegen den simulierten dbserver fertig; Mitschnitte vom echten CDJ fehlen noch._
+- [x] **Meilenstein:** CLI zeigt live alle Decks mit Position, BPM, Titel  
+  _`decklight watch` zeigt den Titel unter jedem Deck, geprüft mit `decklight simulate`._
 
 ### Phase 2: Engine
 - [x] DeckState pro Player inkl. Track-Wechsel-Erkennung
@@ -98,7 +101,8 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 
 ### Phase 7: Show-Datei, Stabilität, Release
 - [ ] Show-Datei speichern/laden, Auto-Save, Backup-Kopien
-- [ ] Track-Wiedererkennung über USB-Sticks hinweg (Titel + Artist + Dauer + Hash)
+- [ ] Track-Wiedererkennung über USB-Sticks hinweg (Titel + Artist + Dauer + Hash)  
+  _Stand: Offsets hängen an Artist + Titel + Dauer und wandern beim Laden der Metadaten mit; Hash folgt._
 - [ ] Dauerlauftest 4 h mit Simulator, CPU/RAM-Messung
 - [ ] Test am echten Setup (CDJ-3000 + DJM), Fehlerliste abarbeiten
 - [ ] Doku: Setup in 5 Schritten, grandMA3-Anleitung (Art-Net TC + OSC einrichten), Rider-Vorlage
