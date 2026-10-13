@@ -285,8 +285,6 @@
 <div class="wave" bind:clientWidth={width} style:height="{height}px" style:--c={color}>
   <canvas
     bind:this={canvas}
-    style:width="{width}px"
-    style:height="{height}px"
     class:pickable={!!onpick}
     onclick={pick}
   ></canvas>
@@ -300,8 +298,13 @@
     overflow: hidden;
     border: 1px solid var(--border);
   }
+  /* Absolut, damit die Leinwand die Breite nicht festhält (schmale Bildschirme). */
   canvas {
     display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
   }
   .pickable {
     cursor: crosshair;
