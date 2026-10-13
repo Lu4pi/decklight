@@ -563,6 +563,7 @@ async fn announce_loop(
 ) {
     let mut target = target;
     let mut checked: Vec<Ipv4Addr> = Vec::new();
+    let mut warned: Vec<Ipv4Addr> = Vec::new();
     tokio::time::sleep(LISTEN_BEFORE_ANNOUNCE).await;
     let wanted = own_number.load(Ordering::Relaxed);
     let taken: Vec<u8> = devices
@@ -594,15 +595,21 @@ async fn announce_loop(
                 .collect();
             for device in fresh {
                 let ip = device.ip;
-                checked.push(ip);
                 if ip.is_loopback() {
+                    checked.push(ip);
                     continue; // Simulator auf diesem Rechner
                 }
+                // Fehlt die passende Karte, bei jedem Takt erneut suchen:
+                // bekommt das Kabel später eine IP, ziehen wir ohne Neustart um.
                 let Some(iface) = interface_for(ip) else {
-                    tracing::warn!(device = %device.name, %ip, "Kein Netzwerkanschluss im Netz dieses Geräts");
-                    let _ = events.send(LinkEvent::NoInterface { device });
+                    if !warned.contains(&ip) {
+                        warned.push(ip);
+                        tracing::warn!(device = %device.name, %ip, "Kein Netzwerkanschluss im Netz dieses Geräts");
+                        let _ = events.send(LinkEvent::NoInterface { device });
+                    }
                     continue;
                 };
+                checked.push(ip);
                 if iface.ip != vp.ip {
                     tracing::info!(
                         from = %vp.ip,
