@@ -168,7 +168,14 @@ export interface ShowView {
 export type FrameRate = "24" | "25" | "29.97df" | "30";
 
 export interface Settings {
-  network: { iface: string | null; player: number; passive: boolean; port_base: number; db_port: number };
+  network: {
+    iface: string | null;
+    player: number;
+    passive: boolean;
+    port_base: number;
+    db_port: number;
+    usb_exports: string[];
+  };
   master_mode: MasterMode;
   timecode_enabled: boolean;
   timecode: {

@@ -58,6 +58,13 @@ enum Cmd {
         /// Tempo, erster Beat und Wellenform kommen aus der Analyse der Dateien.
         #[arg(long, num_args = 1.., conflicts_with_all = ["scenario", "replay"])]
         audio: Vec<std::path::PathBuf>,
+        /// Rekordbox-Export (Stick oder Kopie, Ordner mit `PIONEER`) als DJ-Set:
+        /// echte Titel, Beatgrids, Wellenformen, Cues und Cover.
+        #[arg(long, conflicts_with_all = ["scenario", "replay", "audio"])]
+        usb: Option<std::path::PathBuf>,
+        /// Höchstens so viele Tracks aus dem Export (in Reihenfolge der IDs).
+        #[arg(long, default_value_t = 6, requires = "usb")]
+        tracks: usize,
         /// Mitschnitt abspielen: Wireshark (.pcap, .pcapng) oder `decklight record` (.jsonl).
         #[arg(long, conflicts_with = "scenario")]
         replay: Option<std::path::PathBuf>,
@@ -133,6 +140,8 @@ async fn main() -> Result<()> {
             allow_network,
             db_port,
             audio,
+            usb,
+            tracks,
             replay,
             speed,
             once,
@@ -152,6 +161,7 @@ async fn main() -> Result<()> {
                         .with_context(|| format!("{} lesen", path.display()))?;
                     Scenario::from_json(&text).context("Szenario ist kein gültiges JSON")?
                 }
+                None if usb.is_some() => Scenario::set_list(Vec::new()),
                 None if !audio.is_empty() => Scenario::set_list(
                     audio
                         .iter()
@@ -175,7 +185,29 @@ async fn main() -> Result<()> {
             if has_audio {
                 eprintln!("Analysiere Audiodateien …");
             }
-            let library = decklight_simulator::SimLibrary::load_audio(&mut scenario)?;
+            let mut library = decklight_simulator::SimLibrary::load_audio(&mut scenario)?;
+            if let Some(root) = &usb {
+                let ex = decklight_library::export::Export::open(root)?;
+                let mut ids: Vec<u32> = ex.db.tracks.keys().copied().collect();
+                ids.sort_unstable();
+                let mut set = Vec::new();
+                for id in ids.into_iter().take(tracks.max(1)) {
+                    let Some(data) = ex.track(id) else { continue };
+                    let t = decklight_simulator::SimTrack::from_track_data(&data);
+                    eprintln!(
+                        "  {}",
+                        decklight_simulator::audio::describe(
+                            &data.metadata,
+                            t.bpm,
+                            t.first_beat_ms
+                        )
+                    );
+                    library.insert(id, data);
+                    set.push(t);
+                }
+                anyhow::ensure!(!set.is_empty(), "Keine Tracks im Export {}", root.display());
+                scenario = Scenario::set_list(set);
+            }
             if has_audio {
                 // Set-Liste neu planen, jetzt mit echten Längen.
                 if !audio.is_empty() {

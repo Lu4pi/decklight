@@ -10,6 +10,31 @@ use decklight_library::{
 use std::collections::HashMap;
 
 impl SimTrack {
+    /// Track für die virtuellen Decks aus echten Track-Daten (Rekordbox-Export):
+    /// Länge, Tempo und erster Taktanfang aus Metadaten und Beatgrid.
+    pub fn from_track_data(d: &TrackData) -> Self {
+        let bpm = d
+            .metadata
+            .bpm
+            .or_else(|| d.beat_grid.first().map(|b| b.bpm))
+            .filter(|b| *b > 0.0)
+            .unwrap_or(120.0);
+        let first_beat_ms = d
+            .beat_grid
+            .iter()
+            .find(|b| b.beat_in_bar == 1)
+            .map_or(0.0, |b| f64::from(b.time_ms));
+        Self {
+            id: d.metadata.rekordbox_id,
+            title: d.metadata.title.clone(),
+            artist: d.metadata.artist.clone(),
+            length_ms: d.metadata.duration_s * 1000,
+            bpm,
+            first_beat_ms,
+            file: None,
+        }
+    }
+
     /// Erzeugte Track-Daten (Grid aus BPM und erstem Beat, künstliche Wellenform).
     pub fn synthetic_data(&self) -> TrackData {
         let beat = self.beat_len_ms();
@@ -151,6 +176,11 @@ impl SimLibrary {
             *track = t;
         }
         Ok(lib)
+    }
+
+    /// Echte Track-Daten (z. B. aus einem Rekordbox-Export) für den dbserver.
+    pub fn insert(&mut self, id: u32, data: TrackData) {
+        self.tracks.insert(id, data);
     }
 
     pub fn get(&self, id: u32) -> Option<&TrackData> {

@@ -156,6 +156,16 @@
         DeckLight meldet sich als virtueller Player an (nie 1–4), damit die CDJs ihren Status senden. „Nur zuhören“
         reicht nur für den Simulator.
       </div>
+      <label>Rekordbox-Exporte als Rückfall (je Zeile ein Ordner mit „PIONEER“)
+        <textarea rows="2" placeholder="/Volumes/USB-STICK" disabled={conn.readonly}
+          value={(draft.network.usb_exports ?? []).join("\n")}
+          onchange={(e) => draft && (draft.network.usb_exports = (e.target as HTMLTextAreaElement).value
+            .split("\n").map((l) => l.trim()).filter((l) => l.length > 0))}></textarea>
+      </label>
+      <div class="hint">
+        Liefert ein Player keine Titel und Wellenformen, liest DeckLight sie aus diesen Exporten
+        (eingesteckter Stick oder Kopie).
+      </div>
     </section>
 
     <section>

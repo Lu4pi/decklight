@@ -63,6 +63,74 @@ fn tag_header(fourcc: &[u8; 4], len_header: u32, len_tag: u32) -> Vec<u8> {
     d
 }
 
+/// Alle Tags einer ANLZ-Datei (`ANLZ0000.DAT`/`.EXT`): Kopf `PMAI`, dann Tags
+/// mit Kennung, Kopf- und Gesamtlänge.
+pub fn file_tags(d: &[u8]) -> Vec<([u8; 4], &[u8])> {
+    let mut out = Vec::new();
+    if d.get(..4) != Some(b"PMAI") {
+        return out;
+    }
+    let Some(mut at) = be32(d, 4).map(|l| l as usize) else {
+        return out;
+    };
+    while let (Some(fourcc), Some(len)) = (d.get(at..at + 4), be32(d, at + 8)) {
+        let len = len as usize;
+        if len < 12 {
+            break;
+        }
+        let Some(tag) = d.get(at..at + len) else {
+            break;
+        };
+        out.push(([fourcc[0], fourcc[1], fourcc[2], fourcc[3]], tag));
+        at += len;
+    }
+    out
+}
+
+/// Baut eine ANLZ-Datei aus Tags (für Tests und den Simulator).
+pub fn encode_file(tags: &[Vec<u8>]) -> Vec<u8> {
+    let body: usize = tags.iter().map(Vec::len).sum();
+    let mut d = tag_header(b"PMAI", 0x1c, (0x1c + body) as u32);
+    d.resize(0x1c, 0);
+    for t in tags {
+        d.extend_from_slice(t);
+    }
+    d
+}
+
+/// PQTZ: Beatgrid in `ANLZ0000.DAT`, je Beat 8 Bytes (Schlag im Takt, BPM × 100, Zeit in ms).
+pub fn parse_pqtz(tag: &[u8]) -> Option<Vec<GridBeat>> {
+    if tag.get(..4)? != b"PQTZ" {
+        return None;
+    }
+    let len_header = be32(tag, 4)? as usize;
+    let count = be32(tag, 0x14)? as usize;
+    Some(
+        tag.get(len_header..)?
+            .chunks_exact(8)
+            .take(count)
+            .map(|e| GridBeat {
+                beat_in_bar: u16::from_be_bytes([e[0], e[1]]) as u8,
+                bpm: f64::from(u16::from_be_bytes([e[2], e[3]])) / 100.0,
+                time_ms: u32::from_be_bytes([e[4], e[5], e[6], e[7]]),
+            })
+            .collect(),
+    )
+}
+
+pub fn encode_pqtz(beats: &[GridBeat]) -> Vec<u8> {
+    let mut d = tag_header(b"PQTZ", 0x18, 0x18 + 8 * beats.len() as u32);
+    d.extend_from_slice(&0u32.to_be_bytes());
+    d.extend_from_slice(&0x0008_0000u32.to_be_bytes());
+    d.extend_from_slice(&(beats.len() as u32).to_be_bytes());
+    for b in beats {
+        d.extend_from_slice(&u16::from(b.beat_in_bar).to_be_bytes());
+        d.extend_from_slice(&((b.bpm * 100.0).round() as u16).to_be_bytes());
+        d.extend_from_slice(&b.time_ms.to_be_bytes());
+    }
+    d
+}
+
 /// PWV5: farbige Detail-Wellenform, 150 Spalten pro Sekunde, je 2 Bytes:
 /// Rot 3 Bit, Grün 3 Bit, Blau 3 Bit, Höhe 5 Bit, 2 Bit ungenutzt.
 pub fn parse_pwv5(tag: &[u8]) -> Option<Waveform> {
