@@ -173,17 +173,21 @@ fn parse_windows_addresses(text: &str) -> Vec<InactiveInterface> {
         .collect()
 }
 
-/// Wählt eine Schnittstelle: nach Name oder IP, sonst die erste mit privater
-/// Adresse (CDJ-Netze laufen fast immer in 169.254/16, 192.168/16 oder 10/8).
+/// Wählt eine Schnittstelle: nach Name oder IP, sonst die erste Link-Local-
+/// Adresse, dann die erste private (CDJ-Netze: 169.254/16, 192.168/16, 10/8).
 pub fn pick_interface(wanted: Option<&str>) -> io::Result<Interface> {
     let all = interfaces()?;
     let found = match wanted {
         Some(w) => all
             .into_iter()
             .find(|i| i.name == w || i.ip.to_string() == w),
+        // Link-Local (169.254) zuerst: dort hängen CDJs ohne DHCP-Router,
+        // während 192.168/10er-Netze meist das WLAN sind.
         None => all
-            .into_iter()
-            .find(|i| !i.loopback && (i.ip.is_private() || i.ip.is_link_local())),
+            .iter()
+            .find(|i| !i.loopback && i.ip.is_link_local())
+            .or_else(|| all.iter().find(|i| !i.loopback && i.ip.is_private()))
+            .cloned(),
     };
     found.ok_or_else(|| {
         io::Error::new(
