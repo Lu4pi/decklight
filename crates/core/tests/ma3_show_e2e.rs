@@ -231,12 +231,24 @@ async fn ma3_timecode_show_follows_deck_change_pitch_and_loop() {
         jumps.len()
     );
 
+    // Ein Paket, dem gleich das nächste folgt, lag im Socket-Puffer, weil der
+    // Empfänger kurz nicht lief (ausgelastete CI-Runner). Seine Ankunftszeit
+    // sagt dann nichts darüber, wann DeckLight es gesendet hat.
+    let queued: Vec<bool> = (0..received.len())
+        .map(|i| {
+            received.get(i + 1).is_some_and(|n| {
+                n.0.duration_since(received[i].0).as_secs_f64() * 1000.0 < frame_ms / 3.0
+            })
+        })
+        .collect();
+
     // 1) Jeder Frame passt zum Deck, dessen Track er zeigt.
     let mut checked = [0usize; 2];
+    let mut skipped = 0usize;
     let mut worst: f64 = 0.0;
     let mut first_b: Option<f64> = None;
     let mut a_after_switch = 0;
-    for (at, tc) in &received {
+    for (i, (at, tc)) in received.iter().enumerate() {
         let ms = tc.to_ms();
         let (deck, offset) = if (ms - off_b).abs() < (ms - off_a).abs() {
             (1, off_b)
@@ -250,6 +262,10 @@ async fn ma3_timecode_show_follows_deck_change_pitch_and_loop() {
         }
         if at_ms(*at) < 1_000.0 {
             continue; // Anlauf
+        }
+        if queued[i] {
+            skipped += 1;
+            continue;
         }
         if jumps
             .iter()
@@ -271,8 +287,13 @@ async fn ma3_timecode_show_follows_deck_change_pitch_and_loop() {
     }
     let first_b = first_b.expect("Timecode wechselt nie auf Track B");
     println!(
-        "Frames A {} / B {}, größte Abweichung {worst:.2} ms, Wechsel nach {first_b:.0} ms",
+        "Frames A {} / B {}, größte Abweichung {worst:.2} ms, Wechsel nach {first_b:.0} ms, gepuffert {skipped}",
         checked[0], checked[1]
+    );
+    assert!(
+        skipped * 10 < received.len(),
+        "{skipped} von {} Paketen gepuffert",
+        received.len()
     );
     assert!(checked[0] > 40 && checked[1] > 60, "{checked:?}");
     assert!(worst < frame_ms, "Abweichung {worst:.2} ms ≥ 1 Frame");
