@@ -1,5 +1,5 @@
 //! Formate der Analyse-Daten: Beatgrid aus dem dbserver, Tags aus Rekordbox'
-//! ANLZ-Dateien (PWV5 farbige Wellenform, PCO2 Cues). ANLZ ist Big Endian,
+//! ANLZ-Dateien (PWV5 farbige und PWV7 Drei-Band-Wellenform, PCO2 Cues). ANLZ ist Big Endian,
 //! das dbserver-Beatgrid Little Endian.
 //!
 //! Zu jedem Parser gibt es einen Encoder; Simulator und Tests erzeugen damit
@@ -63,6 +63,74 @@ fn tag_header(fourcc: &[u8; 4], len_header: u32, len_tag: u32) -> Vec<u8> {
     d
 }
 
+/// Alle Tags einer ANLZ-Datei (`ANLZ0000.DAT`/`.EXT`): Kopf `PMAI`, dann Tags
+/// mit Kennung, Kopf- und Gesamtlänge.
+pub fn file_tags(d: &[u8]) -> Vec<([u8; 4], &[u8])> {
+    let mut out = Vec::new();
+    if d.get(..4) != Some(b"PMAI") {
+        return out;
+    }
+    let Some(mut at) = be32(d, 4).map(|l| l as usize) else {
+        return out;
+    };
+    while let (Some(fourcc), Some(len)) = (d.get(at..at + 4), be32(d, at + 8)) {
+        let len = len as usize;
+        if len < 12 {
+            break;
+        }
+        let Some(tag) = d.get(at..at + len) else {
+            break;
+        };
+        out.push(([fourcc[0], fourcc[1], fourcc[2], fourcc[3]], tag));
+        at += len;
+    }
+    out
+}
+
+/// Baut eine ANLZ-Datei aus Tags (für Tests und den Simulator).
+pub fn encode_file(tags: &[Vec<u8>]) -> Vec<u8> {
+    let body: usize = tags.iter().map(Vec::len).sum();
+    let mut d = tag_header(b"PMAI", 0x1c, (0x1c + body) as u32);
+    d.resize(0x1c, 0);
+    for t in tags {
+        d.extend_from_slice(t);
+    }
+    d
+}
+
+/// PQTZ: Beatgrid in `ANLZ0000.DAT`, je Beat 8 Bytes (Schlag im Takt, BPM × 100, Zeit in ms).
+pub fn parse_pqtz(tag: &[u8]) -> Option<Vec<GridBeat>> {
+    if tag.get(..4)? != b"PQTZ" {
+        return None;
+    }
+    let len_header = be32(tag, 4)? as usize;
+    let count = be32(tag, 0x14)? as usize;
+    Some(
+        tag.get(len_header..)?
+            .chunks_exact(8)
+            .take(count)
+            .map(|e| GridBeat {
+                beat_in_bar: u16::from_be_bytes([e[0], e[1]]) as u8,
+                bpm: f64::from(u16::from_be_bytes([e[2], e[3]])) / 100.0,
+                time_ms: u32::from_be_bytes([e[4], e[5], e[6], e[7]]),
+            })
+            .collect(),
+    )
+}
+
+pub fn encode_pqtz(beats: &[GridBeat]) -> Vec<u8> {
+    let mut d = tag_header(b"PQTZ", 0x18, 0x18 + 8 * beats.len() as u32);
+    d.extend_from_slice(&0u32.to_be_bytes());
+    d.extend_from_slice(&0x0008_0000u32.to_be_bytes());
+    d.extend_from_slice(&(beats.len() as u32).to_be_bytes());
+    for b in beats {
+        d.extend_from_slice(&u16::from(b.beat_in_bar).to_be_bytes());
+        d.extend_from_slice(&((b.bpm * 100.0).round() as u16).to_be_bytes());
+        d.extend_from_slice(&b.time_ms.to_be_bytes());
+    }
+    d
+}
+
 /// PWV5: farbige Detail-Wellenform, 150 Spalten pro Sekunde, je 2 Bytes:
 /// Rot 3 Bit, Grün 3 Bit, Blau 3 Bit, Höhe 5 Bit, 2 Bit ungenutzt.
 pub fn parse_pwv5(tag: &[u8]) -> Option<Waveform> {
@@ -87,7 +155,48 @@ pub fn parse_pwv5(tag: &[u8]) -> Option<Waveform> {
     Some(Waveform {
         per_second: 150.0,
         columns,
+        bands: Vec::new(),
     })
+}
+
+/// Rohwerte (Mitten, Höhen, Bass) eines PWV7-Eintrags → Bänder 0–31 der
+/// halben Höhe. Die Faktoren folgen beat-link (Darstellung wie auf dem
+/// CDJ-3000, bezogen auf etwa 40 Pixel halbe Höhe).
+const PWV7_SCALE: [f64; 3] = [0.4 * 31.0 / 40.0, 0.3 * 31.0 / 40.0, 0.06 * 31.0 / 40.0];
+
+/// PWV7 (aus `.2EX`): Drei-Band-Detail-Wellenform des CDJ-3000, 150 Spalten
+/// pro Sekunde, je 3 Bytes: Mitten, Höhen, Bass.
+pub fn parse_pwv7(tag: &[u8]) -> Option<Waveform> {
+    if tag.get(..4)? != b"PWV7" {
+        return None;
+    }
+    let len_header = be32(tag, 4)? as usize;
+    let count = be32(tag, 16)? as usize;
+    let data = tag.get(len_header..)?;
+    let band = |raw: u8, k: usize| (f64::from(raw) * PWV7_SCALE[k]).round().min(31.0) as u8;
+    let bands: Vec<[u8; 3]> = data
+        .chunks_exact(3)
+        .take(count)
+        .map(|e| [band(e[2], 0), band(e[0], 1), band(e[1], 2)])
+        .collect();
+    Some(Waveform {
+        per_second: 150.0,
+        columns: bands.iter().map(|b| WaveColumn::from_bands(*b)).collect(),
+        bands,
+    })
+}
+
+pub fn encode_pwv7(w: &Waveform) -> Vec<u8> {
+    let count = w.bands.len() as u32;
+    let mut d = tag_header(b"PWV7", 0x18, 0x18 + 3 * count);
+    d.extend_from_slice(&3u32.to_be_bytes());
+    d.extend_from_slice(&count.to_be_bytes());
+    d.extend_from_slice(&0x0096_0000u32.to_be_bytes());
+    let raw = |v: u8, k: usize| (f64::from(v) / PWV7_SCALE[k]).round().min(255.0) as u8;
+    for b in &w.bands {
+        d.extend_from_slice(&[raw(b[1], 1), raw(b[2], 2), raw(b[0], 0)]);
+    }
+    d
 }
 
 pub fn encode_pwv5(w: &Waveform) -> Vec<u8> {
@@ -250,6 +359,7 @@ mod tests {
                     rgb: [0, 255, 255],
                 },
             ],
+            bands: Vec::new(),
         };
         let tag = encode_pwv5(&w);
         assert_eq!(&tag[24..26], &[0xe0, 0x7c]); // rot 7, Höhe 31
@@ -267,6 +377,25 @@ mod tests {
                 rgb: [255, 0, 0]
             }]
         );
+    }
+
+    #[test]
+    fn pwv7_bands_scale_and_roundtrip() {
+        // Ein Eintrag wie vom CDJ-3000: Mitten 100, Höhen 200, Bass 80.
+        let mut tag = tag_header(b"PWV7", 0x18, 0x18 + 6);
+        tag.extend_from_slice(&3u32.to_be_bytes());
+        tag.extend_from_slice(&2u32.to_be_bytes());
+        tag.extend_from_slice(&0x0096_0000u32.to_be_bytes());
+        tag.extend_from_slice(&[100, 200, 80, 0, 0, 255]);
+        let w = parse_pwv7(&tag).unwrap();
+        assert_eq!(w.bands, vec![[25, 23, 9], [31, 0, 0]]);
+        assert_eq!(w.columns[0].height, 25);
+        // Nur Bass: reines CDJ-Blau.
+        assert_eq!(w.columns[1].rgb, crate::track::BAND_LOW_RGB);
+        assert_eq!(parse_pwv7(&encode_pwv7(&w)), Some(w.clone()));
+        let o = w.overview(1);
+        assert_eq!(o.bands, vec![[31, 23, 9]]);
+        assert!(parse_pwv7(&encode_pwv5(&w)).is_none());
     }
 
     #[test]

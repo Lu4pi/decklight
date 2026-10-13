@@ -40,11 +40,12 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Status-Pakete CDJ parsen (Zustand, Position, Pitch, BPM, Beat, Master, On-Air)
 - [x] Mixer-Status parsen (On-Air je Kanal, Fader soweit verfügbar)
 - [x] Beat-Pakete parsen
-- [ ] Als virtueller Player anmelden (Nummer ohne Konflikt), sauber abmelden  
-  _Stand: Keep-Alive als Player 7 und Konflikterkennung fertig; Nummern-Claim-Ablauf folgt mit Hardware-Test._
+- [x] Als virtueller Player anmelden (Nummer ohne Konflikt), sauber abmelden  
+  _Hört vor der Anmeldung 1,8 s zu, nimmt eine freie Nummer aus 5–15 (nie 1–4) und weicht aus, wenn ein anderes Gerät dieselbe Nummer meldet (`crates/prolink/tests/number.rs`). PRO DJ LINK kennt kein Abmeldepaket: Nach dem Beenden verschwindet DeckLight nach dem Keep-Alive-Timeout von selbst. Der formale Nummern-Claim echter Player (Pakete 0x00/0x02/0x04) ist für 5–15 nicht nötig._
 - [x] dbserver-Client: Metadaten, Cover, Beatgrid, Wellenformen, Cues  
   _Stand: Client und simulierter dbserver (`decklight simulate` liefert Metadaten, Cover, Wellen, Cues). Byte-Layout nach Doku, Abgleich mit echtem CDJ steht aus._
-- [ ] Fallback: Rekordbox-Export vom USB-Stick lesen (rekordcrate)
+- [x] Fallback: Rekordbox-Export vom USB-Stick lesen  
+  _Eigener Leser für `export.pdb` und ANLZ (rekordcrate 0.3 gibt seine Felder nicht frei), geprüft an echten Exporten aus rekordcrate (3886 Tracks, Demo-Stick mit Grid und Wellen). Exporte unter Ausgänge → PRO DJ LINK eintragen; DeckLight nutzt sie, wenn ein Player nach drei Versuchen nichts liefert und die Länge passt._
 - [ ] Cache pro Track; Unit-Tests gegen Mitschnitte  
   _Stand: Cache und Tests gegen den simulierten dbserver fertig; Mitschnitte vom echten CDJ fehlen noch._
 - [x] **Meilenstein:** CLI zeigt live alle Decks mit Position, BPM, Titel  
@@ -56,8 +57,8 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Rückwärtslauf, Pause, Loop-Ende korrekt
 - [x] MasterSelector mit drei Modi + Hysterese
 - [x] Event-Bus (Events typisiert, aufzeichen- und abspielbar)
-- [ ] Simulator: virtuelle CDJs aus Audiodatei + PCAP-Replay  
-  _Stand: virtuelle CDJs/DJM mit JSON-Szenarien fertig; Audiodatei und PCAP-Replay offen._
+- [x] Simulator: virtuelle CDJs aus Audiodatei + PCAP-Replay  
+  _`decklight simulate --audio a.mp3 b.wav` (Tempo, erster Beat, farbige Wellenform und Tags aus der Analyse, ±0,05 BPM im Test), `--usb /Volumes/STICK` (echter Rekordbox-Export) und `--replay mitschnitt.pcapng|.pcap|.jsonl` (Wireshark oder `decklight record`, mit Originaltiming)._
 - [x] **Meilenstein:** Timecode-Abweichung im Simulator < 1 Frame über 10 min  
   _Stand: CDJ-3000 max. 3,4 ms, CDJ-2000NXS2 (nur Beat-Pakete) max. 5,2 ms im Lauf; NXS2 kennt nach Start/Stopp/Sprung die Position erst mit dem nächsten Beat genau (`crates/engine/tests/timecode_accuracy.rs`)._
 
@@ -70,7 +71,7 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Track-Offsets: automatische Vergabe, Editor, CSV-Import/Export  
   _Automatik und CSV (`decklight run --offsets`), Editor in der Oberfläche unter „Setlist & Offsets“._
 - [ ] Test mit grandMA3 onPC: Timecode-Show auf zwei Tracks programmieren, Deck-Wechsel, Pitch ±8 %, Loop  
-  _Automatischer Ersatz: `crates/core/tests/timecode_e2e.rs` (simulierter CDJ → Art-Net-Empfänger, jeder Frame zur richtigen Zeit). Test am echten Pult steht aus._
+  _Automatischer Ersatz: `crates/core/tests/timecode_e2e.rs` (simulierter CDJ → Art-Net-Empfänger, jeder Frame zur richtigen Zeit) und `crates/core/tests/ma3_show_e2e.rs` (genau dieser Ablauf: zwei Tracks, Deck-Wechsel im On-Air-Modus, Pitch +8 %/−8 %, Loop; ein nachgebautes Pult löst Timecode-Ereignisse aus, Abweichung ≈ 1 ms bei 30 fps). Test am echten Pult steht aus._
 - [ ] **Meilenstein:** MA3 fährt eine Timecode-Show synchron zu einem echten oder simulierten CDJ
 
 ### Phase 4: Trigger
@@ -94,7 +95,7 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
   _`ui/src/theme.css`: dunkles Grundthema, eine Farbe je Deck, Monospace für Zeiten._
 - [x] Deck-Kachel: Cover, Titel, Artist, BPM, Pitch, Key, Zeit, Restzeit, Zustand
 - [x] Übersichts-Wellenform + scrollende Detail-Wellenform mit Beatgrid und Cue-Markern (60 fps)  
-  _Canvas mit requestAnimationFrame; der Playhead wird zwischen den Zustands-Frames weitergerechnet._
+  _Canvas mit requestAnimationFrame; der Playhead wird zwischen den Zustands-Frames weitergerechnet. Drei-Band-Darstellung wie am CDJ-3000 (Bass blau, Mitten orange, Höhen weiß) aus `PWV7` (CDJ-3000 per dbserver, `.2EX` vom Stick) und aus der Audio-Analyse des Simulators; ältere Analysen zeigen die RGB-Wellenform (`PWV5`)._
 - [x] On-Air/Master-Hervorhebung, großer Timecode-Zähler
 - [x] Setlist-/Offset-Ansicht  
   _Doppelklick auf einen Offset zum Ändern, CSV-Import/Export._
@@ -120,8 +121,8 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
   _`.decklight`-Dateien mit Offsets, Cues, Triggern und Ausgängen; laufende Show alle 5 s gesichert, Sicherung alle 5 min (30 bleiben); Show-Dialog mit Import/Export._
 - [x] Track-Wiedererkennung über USB-Sticks hinweg (Titel + Artist + Dauer + Hash)  
   _Fingerabdruck aus Beatgrid und Wellenform: Offsets und Cues folgen dem Track auch nach geänderten Tags._
-- [ ] Dauerlauftest 4 h mit Simulator, CPU/RAM-Messung  
-  _`decklight soak --minutes 240` (Simulator → Kern → Art-Net, OSC, WebSocket); Kurzlauf in der CI auf allen drei Systemen. 4-h-Lauf: läuft._
+- [x] Dauerlauftest 4 h mit Simulator, CPU/RAM-Messung  
+  _`decklight soak --minutes 240` (Simulator → Kern → Art-Net, OSC, WebSocket); Kurzlauf in der CI auf allen drei Systemen. 4-h-Lauf (Release-Build, Linux) bestanden: RAM 12,2 → 13,0 MB, CPU im Mittel 8,8 % eines Kerns, Oberfläche ≥ 39,8 Zustände/s, Timecode in allen 1440 Messfenstern, 322 Trigger ohne Fehler, größte Verspätung 3,1 ms. Ergebnis: [dauerlauf.md](dauerlauf.md)._
 - [ ] Test am echten Setup (CDJ-3000 + DJM), Fehlerliste abarbeiten
 - [x] Doku: Setup in 5 Schritten, grandMA3-Anleitung (Art-Net TC + OSC einrichten), Rider-Vorlage  
   _[einrichtung.md](einrichtung.md), [grandma3.md](grandma3.md), [rider.md](rider.md)_

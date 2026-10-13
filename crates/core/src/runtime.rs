@@ -48,6 +48,9 @@ pub struct CoreConfig {
     pub triggers: TriggerTable,
     /// Ziele für OSC- und MIDI-Aktionen.
     pub actions: ActionOutConfig,
+    /// Rekordbox-Exporte (Wurzel eines Sticks oder einer Kopie) als Rückfall,
+    /// wenn ein Player keine Metadaten liefert.
+    pub usb_exports: Vec<std::path::PathBuf>,
 }
 
 /// Gemeinsamer Zustand, geschützt durch einen Mutex.
@@ -165,6 +168,7 @@ impl Core {
             own_number,
             cfg.db_query_port
                 .unwrap_or(decklight_library::dbserver::QUERY_PORT),
+            Arc::new(metadata::Exports::new(cfg.usb_exports.clone())),
         )));
 
         let outputs = Outputs::spawn(cfg.timecode, cfg.actions, epoch, &shared, &events);

@@ -47,6 +47,54 @@
     return c.position.type === "ms" ? c.position.ms : barToMs(t, c.position.bar, c.position.beat);
   }
 
+  // Farben des CDJ-3000: Bass blau, Mitten orange, Überlappung braun, Höhen weiß.
+  const LOW = "rgb(32,83,217)";
+  const MID = "rgb(242,170,60)";
+  const LOW_MID = "rgb(169,107,39)";
+  const HIGH = "rgb(255,255,255)";
+
+  /** Übersicht mit drei Bändern: von unten gestapelt wie auf dem Player. */
+  function overviewBands(g: CanvasRenderingContext2D, bands: Uint8Array, columns: number, w: number, h: number) {
+    let top = 1;
+    for (let i = 0; i < columns; i++) top = Math.max(top, bands[i * 3] + bands[i * 3 + 1] + bands[i * 3 + 2]);
+    for (let x = 0; x < w; x++) {
+      const a = Math.floor((x * columns) / w);
+      const b = Math.max(a + 1, Math.floor(((x + 1) * columns) / w));
+      let lo = 0;
+      let mi = 0;
+      let hi = 0;
+      for (let i = a; i < b && i < columns; i++) {
+        lo = Math.max(lo, bands[i * 3]);
+        mi = Math.max(mi, bands[i * 3 + 1]);
+        hi = Math.max(hi, bands[i * 3 + 2]);
+      }
+      const k = h / top;
+      g.fillStyle = HIGH;
+      g.fillRect(x, h - (lo + mi + hi) * k, 1, (lo + mi + hi) * k);
+      g.fillStyle = MID;
+      g.fillRect(x, h - (lo + mi) * k, 1, (lo + mi) * k);
+      g.fillStyle = LOW;
+      g.fillRect(x, h - lo * k, 1, lo * k);
+    }
+  }
+
+  /** Eine Detail-Spalte mit drei Bändern auf derselben Achse. */
+  function detailBands(g: CanvasRenderingContext2D, x: number, mid: number, scale: number, lo: number, mi: number, hi: number) {
+    const bar = (color: string, v: number) => {
+      const bh = v * scale;
+      g.fillStyle = color;
+      g.fillRect(x, mid - bh, 1, bh * 2);
+    };
+    if (lo > mi) {
+      bar(LOW, lo);
+      bar(LOW_MID, mi);
+    } else {
+      if (lo !== mi) bar(MID, mi);
+      bar(LOW_MID, lo);
+    }
+    bar(HIGH, hi);
+  }
+
   function buildOverview(t: LoadedTrack, w: number, h: number): HTMLCanvasElement {
     const img = document.createElement("canvas");
     img.width = w;
@@ -54,6 +102,10 @@
     const g = img.getContext("2d")!;
     const wave = t.wave;
     if (!wave) return img;
+    if (wave.bands) {
+      overviewBands(g, wave.bands, wave.columns, w, h);
+      return img;
+    }
     for (let x = 0; x < w; x++) {
       const a = Math.floor((x * wave.columns) / w);
       const b = Math.max(a + 1, Math.floor(((x + 1) * wave.columns) / w));
@@ -120,6 +172,11 @@
         if (ms < 0) continue;
         const col = Math.floor((ms / 1000) * wave.perSecond);
         if (col >= wave.columns) break;
+        if (wave.bands) {
+          const b = col * 3;
+          detailBands(g, x, mid, (h * 0.48) / 31, wave.bands[b], wave.bands[b + 1], wave.bands[b + 2]);
+          continue;
+        }
         const o = col * 4;
         const bh = (wave.data[o] / 31) * (h * 0.48);
         g.fillStyle = `rgb(${wave.data[o + 1]},${wave.data[o + 2]},${wave.data[o + 3]})`;
@@ -228,8 +285,6 @@
 <div class="wave" bind:clientWidth={width} style:height="{height}px" style:--c={color}>
   <canvas
     bind:this={canvas}
-    style:width="{width}px"
-    style:height="{height}px"
     class:pickable={!!onpick}
     onclick={pick}
   ></canvas>
@@ -243,8 +298,13 @@
     overflow: hidden;
     border: 1px solid var(--border);
   }
+  /* Absolut, damit die Leinwand die Breite nicht festhält (schmale Bildschirme). */
   canvas {
     display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
   }
   .pickable {
     cursor: crosshair;

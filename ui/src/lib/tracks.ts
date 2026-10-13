@@ -8,6 +8,8 @@ export interface Wave {
   columns: number;
   /** Je Spalte: Höhe (0–31), R, G, B. */
   data: Uint8Array;
+  /** Je Spalte: Bass, Mitten, Höhen (0–31), wenn die Quelle drei Bänder kennt. */
+  bands: Uint8Array | null;
 }
 
 export interface LoadedTrack {
@@ -37,7 +39,12 @@ export function loadTrack(key: string, refresh = false): Promise<LoadedTrack | n
       }
       const detail = (await r.json()) as TrackDetail;
       const wave = detail.waveform
-        ? { perSecond: detail.waveform.per_second, columns: detail.waveform.columns, data: decode(detail.waveform.data) }
+        ? {
+            perSecond: detail.waveform.per_second,
+            columns: detail.waveform.columns,
+            data: decode(detail.waveform.data),
+            bands: detail.waveform.bands ? decode(detail.waveform.bands) : null,
+          }
         : null;
       return {
         detail,

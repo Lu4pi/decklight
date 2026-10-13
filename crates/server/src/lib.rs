@@ -116,6 +116,12 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Hinweis ins Monitoring schreiben.
+    pub fn warn(&self, level: decklight_core::Level, text: impl Into<String>) {
+        let text = text.into();
+        self.core().with(|s| s.monitor.warn(level, text));
+    }
+
     /// Ordner für Show-Dateien und Sicherungen.
     pub fn set_library(&self, dir: impl Into<PathBuf>) {
         if let Ok(mut l) = self.library.lock() {

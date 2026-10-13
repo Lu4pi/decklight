@@ -2,7 +2,9 @@ name: Release
 
 # Ein Tag `vX.Y.Z` baut signierte Installer für macOS (Universal) und Windows und
 # legt sie als Entwurf auf der Release-Seite ab; veröffentlicht wird von Hand.
-# Von Hand gestartet (workflow_dispatch) darf der Lauf zum Testen unsigniert sein.
+# Von Hand gestartet (workflow_dispatch) oder per Push auf einen Branch
+# `testbuild/...` darf der Lauf zum Testen unsigniert sein; die Installer liegen
+# dann als Artefakte am Lauf.
 #
 # Secrets (Repository → Settings → Secrets and variables → Actions):
 #   macOS:   APPLE_CERTIFICATE (Developer-ID-Application-Zertifikat als .p12, base64),
@@ -15,6 +17,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: ["testbuild/**"]
   workflow_dispatch:
     inputs:
       allow_unsigned:
@@ -63,7 +66,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     env:
-      UNSIGNED_OK: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unsigned }}
+      UNSIGNED_OK: ${{ (github.event_name == 'workflow_dispatch' && inputs.allow_unsigned) || startsWith(github.ref, 'refs/heads/testbuild/') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -119,6 +122,7 @@ jobs:
           "config=$($conf -replace '\\','/')" >> $env:GITHUB_OUTPUT
 
       - name: Desktop-App bauen und Installer hochladen
+        if: steps.certs.outputs.signed == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -128,6 +132,30 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tauriScript: node ui/node_modules/@tauri-apps/cli/tauri.js
+          args: >-
+            ${{ matrix.args }}
+            ${{ steps.wincert.outputs.config && format('--config {0}', steps.wincert.outputs.config) || '' }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: DeckLight ${{ needs.check.outputs.version }}
+          releaseBody: |
+            Installer für macOS (Intel und Apple Silicon) und Windows, dazu das
+            Kommandozeilen-Werkzeug `decklight` (Simulator, Mitschnitte, Dauerlauf).
+            Einrichtung: https://github.com/Lu4pi/decklight/blob/main/docs/einrichtung.md
+          releaseDraft: true
+          prerelease: false
+
+      # Testlauf ohne Zertifikat: leere APPLE_*-Variablen ließen tauri eine
+      # Zertifikat-Einfuhr versuchen, deshalb ein eigener Schritt ohne sie.
+      - name: Desktop-App bauen (unsigniert)
+        if: steps.certs.outputs.signed != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ad-hoc-Signatur: Apple Silicon startet sonst gar nicht; ohne
+          # Developer-ID warnt Gatekeeper trotzdem (Rechtsklick → Öffnen).
+          APPLE_SIGNING_IDENTITY: "-"
         with:
           tauriScript: node ui/node_modules/@tauri-apps/cli/tauri.js
           args: >-

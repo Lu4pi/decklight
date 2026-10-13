@@ -17,6 +17,9 @@ pub struct NetworkSettings {
     pub passive: bool,
     pub port_base: u16,
     pub db_port: u16,
+    /// Rekordbox-Exporte (Ordner mit `PIONEER`), falls ein Player keine
+    /// Metadaten liefert.
+    pub usb_exports: Vec<std::path::PathBuf>,
 }
 
 impl Default for NetworkSettings {
@@ -27,6 +30,7 @@ impl Default for NetworkSettings {
             passive: false,
             port_base: 50000,
             db_port: 12523,
+            usb_exports: Vec::new(),
         }
     }
 }
@@ -97,6 +101,7 @@ impl Settings {
             master_mode: self.master_mode,
             timecode: self.timecode_config(),
             db_query_port: Some(self.network.db_port),
+            usb_exports: self.network.usb_exports.clone(),
             actions: self.actions.clone(),
             ..Default::default()
         })

@@ -177,3 +177,18 @@ pub fn on_air(o: &OnAirChannels) -> Vec<u8> {
     }
     d
 }
+
+/// Kanal und Bytes eines zerlegten Pakets (für das Abspielen von Mitschnitten).
+/// Unbekannte Pakete lassen sich nicht wiederherstellen.
+pub fn packet(p: &crate::packet::Packet) -> Option<(crate::packet::Channel, Vec<u8>)> {
+    use crate::packet::{Channel, Packet};
+    Some(match p {
+        Packet::KeepAlive(k) => (Channel::Announce, keep_alive(k)),
+        Packet::CdjStatus(s) => (Channel::Status, cdj_status(s)),
+        Packet::MixerStatus(m) => (Channel::Status, mixer_status(m)),
+        Packet::Beat(b) => (Channel::Beat, beat(b)),
+        Packet::PrecisePosition(p) => (Channel::Beat, precise_position(p)),
+        Packet::OnAir(o) => (Channel::Beat, on_air(o)),
+        Packet::Unknown { .. } => return None,
+    })
+}

@@ -10,7 +10,33 @@ use decklight_library::{
 use std::collections::HashMap;
 
 impl SimTrack {
-    pub fn track_data(&self) -> TrackData {
+    /// Track für die virtuellen Decks aus echten Track-Daten (Rekordbox-Export):
+    /// Länge, Tempo und erster Taktanfang aus Metadaten und Beatgrid.
+    pub fn from_track_data(d: &TrackData) -> Self {
+        let bpm = d
+            .metadata
+            .bpm
+            .or_else(|| d.beat_grid.first().map(|b| b.bpm))
+            .filter(|b| *b > 0.0)
+            .unwrap_or(120.0);
+        let first_beat_ms = d
+            .beat_grid
+            .iter()
+            .find(|b| b.beat_in_bar == 1)
+            .map_or(0.0, |b| f64::from(b.time_ms));
+        Self {
+            id: d.metadata.rekordbox_id,
+            title: d.metadata.title.clone(),
+            artist: d.metadata.artist.clone(),
+            length_ms: d.metadata.duration_s * 1000,
+            bpm,
+            first_beat_ms,
+            file: None,
+        }
+    }
+
+    /// Erzeugte Track-Daten (Grid aus BPM und erstem Beat, künstliche Wellenform).
+    pub fn synthetic_data(&self) -> TrackData {
         let beat = self.beat_len_ms();
         let beats = ((f64::from(self.length_ms) - self.first_beat_ms) / beat)
             .floor()
@@ -70,7 +96,7 @@ impl SimTrack {
         let n = (f64::from(self.length_ms) / 1000.0 * 150.0) as usize;
         let beat = self.beat_len_ms();
         let mut seed = self.id.wrapping_mul(2_654_435_761);
-        let columns = (0..n)
+        let bands: Vec<[u8; 3]> = (0..n)
             .map(|i| {
                 let ms = i as f64 * 1000.0 / 150.0;
                 seed ^= seed << 13;
@@ -85,24 +111,26 @@ impl SimTrack {
                 } else {
                     (1.0 - phase * 4.0).max(0.0)
                 };
-                let body = if breakdown { 0.25 } else { 0.45 };
-                let h = (body + 0.5 * kick + 0.15 * noise).min(1.0);
-                let rgb = if kick > 0.3 {
-                    [40, 90, 255]
-                } else if breakdown {
-                    [230, 240, 255]
+                // Drei Bänder wie ein Club-Track: Kick im Bass, Flächen in den
+                // Mitten, Hi-Hats auf den Achteln in den Höhen.
+                let hat = (1.0 - ((phase * 2.0).fract() - 0.5).abs() * 8.0).max(0.0);
+                let (low, mid, high) = if breakdown {
+                    (0.05, 0.4 + 0.2 * noise, 0.1 * noise)
                 } else {
-                    [120, 200, 255]
+                    (
+                        0.3 + 0.7 * kick,
+                        0.25 + 0.12 * noise + 0.15 * kick,
+                        0.06 * noise + 0.18 * hat,
+                    )
                 };
-                WaveColumn {
-                    height: (h * 31.0) as u8,
-                    rgb,
-                }
+                let q = |v: f64| (v.min(1.0) * 31.0).round() as u8;
+                [q(low), q(mid), q(high)]
             })
             .collect();
         Waveform {
             per_second: 150.0,
-            columns,
+            columns: bands.iter().map(|b| WaveColumn::from_bands(*b)).collect(),
+            bands,
         }
     }
 }
@@ -113,16 +141,52 @@ pub struct SimLibrary {
 }
 
 impl SimLibrary {
+    /// Track-Daten aller Tracks im Szenario. Tracks mit Audiodatei müssen vorher
+    /// mit [`SimLibrary::load_audio`] analysiert sein, sonst gibt es erzeugte Daten.
     pub fn from_scenario(s: &Scenario) -> Self {
         let tracks = s
             .steps
             .iter()
             .filter_map(|st| match &st.command {
-                Command::Load { track, .. } => Some((track.id, track.track_data())),
+                Command::Load { track, .. } => Some((track.id, track.synthetic_data())),
                 _ => None,
             })
             .collect();
         Self { tracks }
+    }
+
+    /// Audiodateien im Szenario analysieren: Länge, BPM und erster Beat landen im
+    /// Szenario (für die Decks), Wellenform und Tags in der Bibliothek. Jede Datei
+    /// wird nur einmal gelesen.
+    pub fn load_audio(s: &mut Scenario) -> Result<Self, crate::audio::AudioError> {
+        let mut lib = Self::from_scenario(s);
+        let mut done: HashMap<u32, SimTrack> = HashMap::new();
+        for st in &mut s.steps {
+            let Command::Load { track, .. } = &mut st.command else {
+                continue;
+            };
+            let Some(path) = track.file.clone() else {
+                continue;
+            };
+            if let Some(t) = done.get(&track.id) {
+                *track = t.clone();
+                continue;
+            }
+            let (t, data) = SimTrack::from_audio(track.id, &path)?;
+            lib.tracks.insert(t.id, data);
+            done.insert(t.id, t.clone());
+            *track = t;
+        }
+        Ok(lib)
+    }
+
+    /// Echte Track-Daten (z. B. aus einem Rekordbox-Export) für den dbserver.
+    pub fn insert(&mut self, id: u32, data: TrackData) {
+        self.tracks.insert(id, data);
+    }
+
+    pub fn get(&self, id: u32) -> Option<&TrackData> {
+        self.tracks.get(&id)
     }
 }
 

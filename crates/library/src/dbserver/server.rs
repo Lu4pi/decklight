@@ -158,6 +158,11 @@ async fn serve(mut s: TcpStream, source: Arc<dyn TrackSource>) -> std::io::Resul
                 let fourcc = m.arg_u32(2).unwrap_or(0).to_le_bytes();
                 let blob = source.track(slot, id).and_then(|t| match &fourcc {
                     b"PWV5" => t.waveform.as_ref().map(anlz::encode_pwv5),
+                    b"PWV7" => t
+                        .waveform
+                        .as_ref()
+                        .filter(|w| !w.bands.is_empty())
+                        .map(anlz::encode_pwv7),
                     b"PCO2" => {
                         let mut b = anlz::encode_pco2(&t.cues, false);
                         b.extend(anlz::encode_pco2(&t.cues, true));

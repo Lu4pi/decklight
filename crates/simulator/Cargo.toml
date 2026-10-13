@@ -13,6 +13,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
+symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "aiff", "flac", "mp3", "aac", "isomp4", "alac"] }
 
 [lints]
 workspace = true

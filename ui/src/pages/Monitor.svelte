@@ -83,7 +83,7 @@
 
 <style>
   .monitor {
-    height: 100vh;
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
     padding: 12px;
@@ -125,7 +125,7 @@
   }
   @media (max-width: 800px) {
     .decks {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
   }
   .deck {
@@ -134,6 +134,7 @@
     border-left: 6px solid var(--c);
     border-radius: 10px;
     padding: 12px;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 10px;

@@ -17,14 +17,25 @@
         "height": 900,
         "minWidth": 1024,
         "minHeight": 640,
-        "backgroundColor": "#0b0d10"
+        "backgroundColor": "#0b0d10",
+        "label": "main",
+        "create": false
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app", "nsis", "msi", "deb", "appimage"],
+    "targets": [
+      "dmg",
+      "app",
+      "nsis",
+      "msi",
+      "deb",
+      "appimage"
+    ],
     "category": "Music",
     "shortDescription": "Show-Steuerung für CDJs",
     "license": "GPL-3.0-or-later",

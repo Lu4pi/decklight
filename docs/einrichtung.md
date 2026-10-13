@@ -63,7 +63,8 @@ Weiter: [grandMA3 einrichten](grandma3.md) · [Rider-Vorlage](rider.md)
 | Problem | Lösung |
 | --- | --- |
 | Keine Decks | Kabel, Schnittstelle in *Ausgänge*, Firewall-Freigabe; der Reiter *Monitoring* zeigt Warnungen |
-| Decks da, aber keine Titel | Player braucht einen Moment nach dem Laden; USB-Stick mit rekordbox exportiert? |
+| Decks da, aber keine Titel | Player braucht einen Moment nach dem Laden; USB-Stick mit rekordbox exportiert? Als Rückfall unter *Ausgänge → PRO DJ LINK* den Stick oder eine Kopie davon eintragen |
+| Player-Nummer belegt | DeckLight weicht selbst auf eine freie Nummer aus 5–15 aus und meldet das unter *Monitoring* |
 | Pult reagiert nicht auf OSC | *OSC testen*; im Pult Receive + Receive Command an, Port und Präfix gleich |
 | Timecode springt | Master-Auswahl prüfen; bei *On Air / Fader* folgt der Timecode dem lautesten Kanal |
 | Port belegt | Läuft rekordbox (Link/Performance) auf demselben Rechner? Dann beenden |

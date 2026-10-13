@@ -3,10 +3,12 @@
 use crate::runtime::{content_key, track_key, Shared};
 use decklight_engine::{BeatGrid, EngineEvent, Stamped, TrackRef};
 use decklight_library::dbserver::client::asking_player;
+use decklight_library::export::Export;
 use decklight_library::{load_track, TrackData, TrackLocation};
 use decklight_show::{OffsetTable, TrackKey, TriggerTable};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
@@ -21,6 +23,59 @@ const ATTEMPTS: u32 = 3;
 /// So lange auf den Keep-Alive eines Players warten.
 const DEVICE_WAIT: Duration = Duration::from_secs(10);
 
+/// Rekordbox-Exporte (Stick-Kopien oder eingesteckte Sticks) als Rückfall, wenn
+/// ein Player keine Metadaten liefert. Geöffnete Exporte bleiben im Speicher, bis
+/// sich die `export.pdb` ändert.
+/// Geöffneter Export mit Änderungszeit der `export.pdb`.
+type OpenExport = (Option<std::time::SystemTime>, Arc<Export>);
+
+#[derive(Default)]
+pub(crate) struct Exports {
+    roots: Vec<PathBuf>,
+    open: Mutex<HashMap<PathBuf, OpenExport>>,
+}
+
+impl Exports {
+    pub(crate) fn new(roots: Vec<PathBuf>) -> Self {
+        Self {
+            roots,
+            open: Mutex::default(),
+        }
+    }
+
+    fn export(&self, root: &PathBuf) -> Option<Arc<Export>> {
+        let pdb = root.join("PIONEER").join("rekordbox").join("export.pdb");
+        let mtime = std::fs::metadata(&pdb).and_then(|m| m.modified()).ok();
+        let mut open = self.open.lock().ok()?;
+        if let Some((t, ex)) = open.get(root) {
+            if *t == mtime {
+                return Some(ex.clone());
+            }
+        }
+        match Export::open(root) {
+            Ok(ex) => {
+                let ex = Arc::new(ex);
+                open.insert(root.clone(), (mtime, ex.clone()));
+                Some(ex)
+            }
+            Err(e) => {
+                tracing::debug!(root = %root.display(), error = %e, "Export nicht lesbar");
+                None
+            }
+        }
+    }
+
+    /// Track in den Exporten suchen. Rekordbox-IDs gelten je Stick; passt die
+    /// Länge nicht zur Angabe des Players, ist es ein anderer Track.
+    fn find(&self, rekordbox_id: u32, length_s: Option<u32>) -> Option<(PathBuf, TrackData)> {
+        self.roots.iter().find_map(|root| {
+            let t = self.export(root)?.track(rekordbox_id)?;
+            let fits = length_s.is_none_or(|l| l.abs_diff(t.metadata.duration_s) <= 1);
+            fits.then(|| (root.clone(), t))
+        })
+    }
+}
+
 pub(crate) async fn run(
     mut rx: mpsc::UnboundedReceiver<FetchRequest>,
     shared: Arc<Mutex<Shared>>,
@@ -28,6 +83,7 @@ pub(crate) async fn run(
     epoch: Instant,
     own_number: u8,
     query_port: u16,
+    exports: Arc<Exports>,
 ) {
     let in_flight: Arc<Mutex<HashSet<TrackRef>>> = Arc::default();
     while let Some(req) = rx.recv().await {
@@ -39,8 +95,11 @@ pub(crate) async fn run(
         }
         drop(busy);
         let (shared, events, in_flight) = (shared.clone(), events.clone(), in_flight.clone());
+        let exports = exports.clone();
         tokio::spawn(async move {
-            fetch(req, &shared, &events, epoch, own_number, query_port).await;
+            if !fetch(req, &shared, &events, epoch, own_number, query_port).await {
+                from_export(req, &shared, &events, epoch, &exports).await;
+            }
             if let Ok(mut busy) = in_flight.lock() {
                 busy.remove(&req.track);
             }
@@ -48,6 +107,48 @@ pub(crate) async fn run(
     }
 }
 
+/// Rückfall auf die Exporte, wenn der dbserver nichts geliefert hat.
+async fn from_export(
+    req: FetchRequest,
+    shared: &Arc<Mutex<Shared>>,
+    events: &broadcast::Sender<Stamped>,
+    epoch: Instant,
+    exports: &Arc<Exports>,
+) {
+    if exports.roots.is_empty() {
+        return;
+    }
+    let length_s = shared.lock().ok().and_then(|s| {
+        s.engine
+            .decks()
+            .find(|d| d.track == Some(req.track))
+            .and_then(|d| d.track_length_ms)
+            .map(|ms| (ms + 500) / 1000)
+    });
+    let ex = exports.clone();
+    let id = req.track.rekordbox_id;
+    let found = tokio::task::spawn_blocking(move || ex.find(id, length_s))
+        .await
+        .ok()
+        .flatten();
+    let Some((root, data)) = found else {
+        return;
+    };
+    tracing::info!(id, root = %root.display(), "Metadaten aus dem Rekordbox-Export");
+    if let Ok(mut s) = shared.lock() {
+        s.monitor.warn(
+            crate::monitor::Level::Info,
+            format!(
+                "„{}“ aus dem Export {} gelesen (Player lieferte nichts)",
+                data.metadata.label(),
+                root.display()
+            ),
+        );
+    }
+    store(req, data, shared, events, epoch);
+}
+
+/// `true`, wenn Metadaten da sind (geladen oder schon vorhanden).
 async fn fetch(
     req: FetchRequest,
     shared: &Arc<Mutex<Shared>>,
@@ -55,7 +156,7 @@ async fn fetch(
     epoch: Instant,
     own_number: u8,
     query_port: u16,
-) {
+) -> bool {
     let r = req.track;
     let loc = TrackLocation {
         slot: r.slot.to_byte(),
@@ -68,9 +169,9 @@ async fn fetch(
     let mut attempt = 0;
     while attempt < ATTEMPTS {
         let target = {
-            let Ok(s) = shared.lock() else { return };
+            let Ok(s) = shared.lock() else { return true };
             if s.keys.contains_key(&r) {
-                return;
+                return true;
             }
             let ip = s
                 .engine
@@ -86,7 +187,7 @@ async fn fetch(
                     player = r.source_player,
                     "Player unbekannt, keine Metadaten"
                 );
-                return;
+                return false;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
@@ -95,7 +196,7 @@ async fn fetch(
         match load_track(ip, query_port, asking, loc).await {
             Ok(data) => {
                 store(req, data, shared, events, epoch);
-                return;
+                return true;
             }
             Err(e) => {
                 tracing::warn!(attempt, player = r.source_player, id = r.rekordbox_id, error = %e, "Metadaten nicht geladen");
@@ -114,6 +215,7 @@ async fn fetch(
             }
         }
     }
+    false
 }
 
 fn store(
