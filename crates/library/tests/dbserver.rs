@@ -65,6 +65,7 @@ fn sample() -> TrackData {
                     rgb: [0, 109, 255],
                 })
                 .collect(),
+            bands: Vec::new(),
         }),
     }
 }
@@ -91,6 +92,32 @@ async fn loads_everything_from_a_dbserver() {
     assert_eq!(w.columns.len(), 1500);
     assert_eq!(w.columns[31].height, 31);
     assert_eq!(w.columns[0].rgb, [0, 109, 255]);
+}
+
+/// CDJ-3000: Die Drei-Band-Wellenform (PWV7 aus 2EX) hat Vorrang vor PWV5.
+#[tokio::test]
+async fn three_band_waveform_is_preferred() {
+    let mut t = sample();
+    let bands: Vec<[u8; 3]> = (0..1500u32)
+        .map(|i| [(i % 31) as u8, ((i / 2) % 23) as u8, (i % 7) as u8])
+        .collect();
+    t.waveform = Some(Waveform {
+        per_second: 150.0,
+        columns: bands.iter().map(|b| WaveColumn::from_bands(*b)).collect(),
+        bands,
+    });
+    let local = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let server = DbServer::start(local, 0, Arc::new(One(t.clone())))
+        .await
+        .unwrap();
+    let loc = TrackLocation {
+        slot: 3,
+        track_type: 1,
+        rekordbox_id: 4711,
+    };
+    let data = load_track(local, server.query_port, 1, loc).await.unwrap();
+    assert_eq!(data.waveform, t.waveform);
+    assert_eq!(data.cues, t.cues);
 }
 
 #[tokio::test]

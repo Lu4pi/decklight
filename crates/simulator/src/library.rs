@@ -96,7 +96,7 @@ impl SimTrack {
         let n = (f64::from(self.length_ms) / 1000.0 * 150.0) as usize;
         let beat = self.beat_len_ms();
         let mut seed = self.id.wrapping_mul(2_654_435_761);
-        let columns = (0..n)
+        let bands: Vec<[u8; 3]> = (0..n)
             .map(|i| {
                 let ms = i as f64 * 1000.0 / 150.0;
                 seed ^= seed << 13;
@@ -111,24 +111,26 @@ impl SimTrack {
                 } else {
                     (1.0 - phase * 4.0).max(0.0)
                 };
-                let body = if breakdown { 0.25 } else { 0.45 };
-                let h = (body + 0.5 * kick + 0.15 * noise).min(1.0);
-                let rgb = if kick > 0.3 {
-                    [40, 90, 255]
-                } else if breakdown {
-                    [230, 240, 255]
+                // Drei Bänder wie ein Club-Track: Kick im Bass, Flächen in den
+                // Mitten, Hi-Hats auf den Achteln in den Höhen.
+                let hat = (1.0 - ((phase * 2.0).fract() - 0.5).abs() * 8.0).max(0.0);
+                let (low, mid, high) = if breakdown {
+                    (0.05, 0.4 + 0.2 * noise, 0.1 * noise)
                 } else {
-                    [120, 200, 255]
+                    (
+                        0.3 + 0.7 * kick,
+                        0.25 + 0.12 * noise + 0.15 * kick,
+                        0.06 * noise + 0.18 * hat,
+                    )
                 };
-                WaveColumn {
-                    height: (h * 31.0) as u8,
-                    rgb,
-                }
+                let q = |v: f64| (v.min(1.0) * 31.0).round() as u8;
+                [q(low), q(mid), q(high)]
             })
             .collect();
         Waveform {
             per_second: 150.0,
-            columns,
+            columns: bands.iter().map(|b| WaveColumn::from_bands(*b)).collect(),
+            bands,
         }
     }
 }

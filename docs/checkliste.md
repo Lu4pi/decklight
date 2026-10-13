@@ -95,7 +95,7 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
   _`ui/src/theme.css`: dunkles Grundthema, eine Farbe je Deck, Monospace für Zeiten._
 - [x] Deck-Kachel: Cover, Titel, Artist, BPM, Pitch, Key, Zeit, Restzeit, Zustand
 - [x] Übersichts-Wellenform + scrollende Detail-Wellenform mit Beatgrid und Cue-Markern (60 fps)  
-  _Canvas mit requestAnimationFrame; der Playhead wird zwischen den Zustands-Frames weitergerechnet._
+  _Canvas mit requestAnimationFrame; der Playhead wird zwischen den Zustands-Frames weitergerechnet. Drei-Band-Darstellung wie am CDJ-3000 (Bass blau, Mitten orange, Höhen weiß) aus `PWV7` (CDJ-3000 per dbserver, `.2EX` vom Stick) und aus der Audio-Analyse des Simulators; ältere Analysen zeigen die RGB-Wellenform (`PWV5`)._
 - [x] On-Air/Master-Hervorhebung, großer Timecode-Zähler
 - [x] Setlist-/Offset-Ansicht  
   _Doppelklick auf einen Offset zum Ändern, CSV-Import/Export._

@@ -68,6 +68,10 @@ pub struct Waveform {
     /// Spalten pro Sekunde (Detail: 150).
     pub per_second: f64,
     pub columns: Vec<WaveColumn>,
+    /// Drei Bänder je Spalte im CDJ-3000-Stil (Bass, Mitten, Höhen; 0–31 der
+    /// halben Höhe). Leer, wenn die Quelle nur die RGB-Wellenform kennt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bands: Vec<[u8; 3]>,
 }
 
 impl Waveform {
@@ -77,20 +81,36 @@ impl Waveform {
             return Waveform::default();
         }
         let len = self.columns.len();
+        let range = |i: usize| {
+            let a = i * len / n;
+            a..((i + 1) * len / n).max(a + 1).min(len)
+        };
         let columns = (0..n)
             .map(|i| {
-                let a = i * len / n;
-                let b = ((i + 1) * len / n).max(a + 1).min(len);
-                *self.columns[a..b]
+                let r = range(i);
+                let a = r.start;
+                *self.columns[r]
                     .iter()
                     .max_by_key(|c| c.height)
                     .unwrap_or(&self.columns[a])
             })
             .collect();
+        let bands = if self.bands.len() == len {
+            (0..n)
+                .map(|i| {
+                    self.bands[range(i)].iter().fold([0u8; 3], |m, b| {
+                        [m[0].max(b[0]), m[1].max(b[1]), m[2].max(b[2])]
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let duration_s = len as f64 / self.per_second.max(1e-9);
         Waveform {
             per_second: n as f64 / duration_s.max(1e-9),
             columns,
+            bands,
         }
     }
 }
@@ -137,6 +157,31 @@ impl TrackData {
             }
         }
         Some(format!("{h:016x}"))
+    }
+}
+
+/// Farben der drei Bänder wie auf dem CDJ-3000.
+pub const BAND_LOW_RGB: [u8; 3] = [32, 83, 217];
+pub const BAND_MID_RGB: [u8; 3] = [242, 170, 60];
+pub const BAND_HIGH_RGB: [u8; 3] = [255, 255, 255];
+
+impl WaveColumn {
+    /// Einfarbige Spalte aus drei Bändern (für Ansichten ohne Bänder):
+    /// Höhe des lautesten Bands, Farbe nach Anteilen gemischt.
+    pub fn from_bands(b: [u8; 3]) -> Self {
+        let w = [f64::from(b[0]), f64::from(b[1]), f64::from(b[2]) * 2.0];
+        let sum = (w[0] + w[1] + w[2]).max(1e-9);
+        let mix = |k: usize| {
+            ((w[0] * f64::from(BAND_LOW_RGB[k])
+                + w[1] * f64::from(BAND_MID_RGB[k])
+                + w[2] * f64::from(BAND_HIGH_RGB[k]))
+                / sum)
+                .round() as u8
+        };
+        WaveColumn {
+            height: b[0].max(b[1]).max(b[2]).min(31),
+            rgb: [mix(0), mix(1), mix(2)],
+        }
     }
 }
 

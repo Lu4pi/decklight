@@ -201,7 +201,8 @@ export interface TrackDetail {
   beats: [number, number][];
   rekordbox_cues: RekordboxCue[];
   cues: Cue[];
-  waveform: { per_second: number; columns: number; data: string } | null;
+  /** `data`: je Spalte Höhe, R, G, B. `bands`: je Spalte Bass, Mitten, Höhen (0–31). */
+  waveform: { per_second: number; columns: number; data: string; bands?: string } | null;
 }
 
 export interface Stamped {

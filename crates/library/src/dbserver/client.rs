@@ -230,7 +230,16 @@ impl DbClient {
         .await
     }
 
+    /// Detail-Wellenform: die Drei-Band-Variante des CDJ-3000 (`PWV7` aus
+    /// `2EX`), sonst die RGB-Variante (`PWV5` aus `EXT`).
     pub async fn waveform(&mut self, loc: TrackLocation) -> Result<Waveform, DbError> {
+        if let Ok(blob) = self.anlz_tag(loc, b"PWV7", b"2EX").await {
+            if let Some(w) = anlz::find_tag(&blob, b"PWV7").and_then(anlz::parse_pwv7) {
+                if !w.bands.is_empty() {
+                    return Ok(w);
+                }
+            }
+        }
         let blob = self.anlz_tag(loc, b"PWV5", b"EXT").await?;
         anlz::find_tag(&blob, b"PWV5")
             .and_then(anlz::parse_pwv5)

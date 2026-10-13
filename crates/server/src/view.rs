@@ -182,11 +182,14 @@ pub struct TrackDetail {
 }
 
 /// Wellenform kompakt: je Spalte vier Bytes (Höhe 0–31, R, G, B), Base64.
+/// Dazu, falls vorhanden, die drei Bänder (Bass, Mitten, Höhen; je 0–31).
 #[derive(Debug, Clone, Serialize)]
 pub struct WaveformView {
     pub per_second: f64,
     pub columns: usize,
     pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bands: Option<String>,
 }
 
 pub fn track_detail(s: &Shared, key: &TrackKey) -> Option<TrackDetail> {
@@ -196,10 +199,13 @@ pub fn track_detail(s: &Shared, key: &TrackKey) -> Option<TrackDetail> {
         for c in &w.columns {
             bytes.extend_from_slice(&[c.height, c.rgb[0], c.rgb[1], c.rgb[2]]);
         }
+        let b64 = &base64::engine::general_purpose::STANDARD;
         WaveformView {
             per_second: w.per_second,
             columns: w.columns.len(),
-            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            data: b64.encode(bytes),
+            bands: (w.bands.len() == w.columns.len() && !w.bands.is_empty())
+                .then(|| b64.encode(w.bands.concat())),
         }
     });
     Some(TrackDetail {

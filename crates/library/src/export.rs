@@ -325,6 +325,16 @@ impl Export {
                 cues.sort_by_key(|c| c.position_ms);
                 data.cues = cues;
             }
+            // CDJ-3000-Analyse: Drei-Band-Wellenform ersetzt die RGB-Variante.
+            if let Ok(d) = std::fs::read(dat.with_extension("2EX")) {
+                if let Some(w) = anlz::file_tags(&d)
+                    .into_iter()
+                    .find(|(cc, _)| cc == b"PWV7")
+                    .and_then(|(_, tag)| anlz::parse_pwv7(tag))
+                {
+                    data.waveform = Some(w);
+                }
+            }
         }
         if let Some(path) = self.db.artwork.get(&t.artwork_id) {
             data.artwork = std::fs::read(self.file(path)).ok();
@@ -598,6 +608,7 @@ mod tests {
                 };
                 300
             ],
+            bands: Vec::new(),
         };
         let cues = vec![
             CuePoint {

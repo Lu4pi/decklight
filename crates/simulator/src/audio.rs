@@ -194,7 +194,7 @@ pub fn analyze(samples: &[f32], rate: u32) -> Option<Analysis> {
             env_n = 0;
         }
     }
-    let waveform = waveform(&cols);
+    let waveform = waveform(&cols, per_col);
     // Ein Hüllkurven-Schritt dauert hop/rate Sekunden (nicht immer genau 1 ms).
     let env_ms = hop as f64 * 1000.0 / rate_f;
     let (bpm, first_beat_ms) = tempo(&env, env_ms);
@@ -206,7 +206,9 @@ pub fn analyze(samples: &[f32], rate: u32) -> Option<Analysis> {
     })
 }
 
-fn waveform(cols: &[[f64; 4]]) -> Waveform {
+/// Wellenform im CDJ-3000-Stil: je Spalte die Pegel der drei Bänder (Bass blau,
+/// Mitten orange, Höhen weiß), alle auf denselben Spitzenwert bezogen.
+fn waveform(cols: &[[f64; 4]], per_col: f64) -> Waveform {
     let mut peaks: Vec<f64> = cols.iter().map(|c| c[0]).collect();
     peaks.sort_by(f64::total_cmp);
     let norm = peaks
@@ -214,28 +216,23 @@ fn waveform(cols: &[[f64; 4]]) -> Waveform {
         .copied()
         .unwrap_or(1.0)
         .max(1e-6);
-    let columns = cols
+    // Effektivwert je Band im Verhältnis zur Spitze; Gewichte wie auf dem
+    // Player: Bass füllt, Mitten mittel, Höhen als schmaler Kern.
+    const GAIN: [f64; 3] = [1.6, 1.4, 1.2];
+    let bands: Vec<[u8; 3]> = cols
         .iter()
         .map(|c| {
-            let (l, m, h) = (c[1].sqrt(), c[2].sqrt() * 1.6, c[3].sqrt() * 2.5);
-            let t = (l + m + h).max(1e-9);
-            // CDJ-3000-Stil: Bass blau, Mitten orange, Höhen weiß.
-            let mix = |lo: f64, mi: f64, hi: f64| {
-                ((lo * l + mi * m + hi * h) / t).clamp(0.0, 255.0) as u8
+            let level = |k: usize| {
+                let rms = (c[k + 1] / per_col.max(1.0)).sqrt();
+                ((rms / norm * GAIN[k]).min(1.0) * 31.0).round() as u8
             };
-            WaveColumn {
-                height: ((c[0] / norm).min(1.0) * 31.0).round() as u8,
-                rgb: [
-                    mix(30.0, 255.0, 255.0),
-                    mix(90.0, 150.0, 255.0),
-                    mix(255.0, 30.0, 255.0),
-                ],
-            }
+            [level(0), level(1), level(2)]
         })
         .collect();
     Waveform {
         per_second: COLUMNS_PER_SECOND,
-        columns,
+        columns: bands.iter().map(|b| WaveColumn::from_bands(*b)).collect(),
+        bands,
     }
 }
 
@@ -477,12 +474,22 @@ mod tests {
     fn waveform_colors_follow_bands() {
         let s = synth(120.0, 0.0, 8.0, 22_050);
         let a = analyze(&s, 22_050).unwrap();
-        // Spalte direkt auf dem Kick (Bass) ist blauer als die auf der Hi-Hat.
-        let kick = a.waveform.columns[150 * 2 + 3];
-        let hat = a.waveform.columns[150 * 2 + 38];
-        assert!(kick.height > hat.height / 2);
-        assert!(kick.rgb[2] >= kick.rgb[0], "{kick:?}");
-        assert!(hat.rgb[0] > kick.rgb[0], "{hat:?} {kick:?}");
+        // Auf dem Kick dominiert der Bass (blau), auf der Hi-Hat die Höhen.
+        let w = &a.waveform;
+        assert_eq!(w.bands.len(), w.columns.len());
+        let (kick, hat) = (150 * 2 + 3, 150 * 2 + 38);
+        let [kl, _, kh] = w.bands[kick];
+        let [hl, _, hh] = w.bands[hat];
+        assert!(
+            kl > 2 * hl.max(1),
+            "Kick {:?}, Hat {:?}",
+            w.bands[kick],
+            w.bands[hat]
+        );
+        assert!(hh > kh, "Kick {:?}, Hat {:?}", w.bands[kick], w.bands[hat]);
+        assert!(w.columns[kick].height > w.columns[hat].height);
+        assert!(w.columns[kick].rgb[2] > w.columns[kick].rgb[0]);
+        assert!(w.columns[hat].rgb[0] > w.columns[kick].rgb[0]);
     }
 
     #[test]

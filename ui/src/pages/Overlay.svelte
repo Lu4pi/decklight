@@ -15,6 +15,9 @@
   $effect(() => {
     document.documentElement.style.background = "transparent";
     document.body.style.background = "transparent";
+    // Dunkles Farbschema malt in manchen Browsern (auch Browser-Quellen) eine
+    // dunkle Grundfläche hinter die transparente Seite.
+    document.documentElement.style.colorScheme = "normal";
   });
 
   const deck = $derived.by(() => {
