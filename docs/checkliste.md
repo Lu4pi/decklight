@@ -121,8 +121,8 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
   _`.decklight`-Dateien mit Offsets, Cues, Triggern und Ausgängen; laufende Show alle 5 s gesichert, Sicherung alle 5 min (30 bleiben); Show-Dialog mit Import/Export._
 - [x] Track-Wiedererkennung über USB-Sticks hinweg (Titel + Artist + Dauer + Hash)  
   _Fingerabdruck aus Beatgrid und Wellenform: Offsets und Cues folgen dem Track auch nach geänderten Tags._
-- [ ] Dauerlauftest 4 h mit Simulator, CPU/RAM-Messung  
-  _`decklight soak --minutes 240` (Simulator → Kern → Art-Net, OSC, WebSocket); Kurzlauf in der CI auf allen drei Systemen. 4-h-Lauf: läuft._
+- [x] Dauerlauftest 4 h mit Simulator, CPU/RAM-Messung  
+  _`decklight soak --minutes 240` (Simulator → Kern → Art-Net, OSC, WebSocket); Kurzlauf in der CI auf allen drei Systemen. 4-h-Lauf (Release-Build, Linux) bestanden: RAM 12,2 → 13,0 MB, CPU im Mittel 8,8 % eines Kerns, Oberfläche ≥ 39,8 Zustände/s, Timecode in allen 1440 Messfenstern, 322 Trigger ohne Fehler, größte Verspätung 3,1 ms. Ergebnis: [dauerlauf.md](dauerlauf.md)._
 - [ ] Test am echten Setup (CDJ-3000 + DJM), Fehlerliste abarbeiten
 - [x] Doku: Setup in 5 Schritten, grandMA3-Anleitung (Art-Net TC + OSC einrichten), Rider-Vorlage  
   _[einrichtung.md](einrichtung.md), [grandma3.md](grandma3.md), [rider.md](rider.md)_
