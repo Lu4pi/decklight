@@ -27,9 +27,12 @@ pub struct ActionOutConfig {
     #[serde(default)]
     pub midi_port: Option<String>,
     /// MA3-Befehl, der bei jeder Tempoänderung des Master-Decks per OSC geht,
-    /// `{bpm}` wird ersetzt (z. B. `Master 3.1 At {bpm}` für Speed-Master 1).
+    /// `{bpm}` wird ersetzt (z. B. `Master 3.1 At BPM {bpm}` für Speed-Master 1).
     /// Leer = aus. Läuft auch bei Not-Aus weiter, wie der Timecode.
-    #[serde(default = "default_bpm_command")]
+    #[serde(
+        default = "default_bpm_command",
+        deserialize_with = "bpm_command_upgrade"
+    )]
     pub bpm_command: Option<String>,
     /// MA3-Befehl für den Phasen-Sync, genau auf dem Beat gesendet: auf jeder
     /// „1“ (alle 4 Beats), während einer Tempoänderung auf jedem Beat. Danach
@@ -38,8 +41,21 @@ pub struct ActionOutConfig {
     pub phase_command: Option<String>,
 }
 
-/// Speed-Master 1 der grandMA3 folgt dem Tempo des Master-Decks.
-pub const DEFAULT_BPM_COMMAND: &str = "Master 3.1 At {bpm}";
+/// Speed-Master 1 der grandMA3 folgt dem Tempo des Master-Decks. Ohne
+/// „BPM“ setzt die MA3 den Fader-Wert statt des Tempos.
+pub const DEFAULT_BPM_COMMAND: &str = "Master 3.1 At BPM {bpm}";
+
+/// Frühere Voreinstellung ohne „BPM“; gespeicherte Einstellungen damit werden
+/// beim Laden auf [`DEFAULT_BPM_COMMAND`] gehoben.
+pub const OLD_BPM_COMMAND: &str = "Master 3.1 At {bpm}";
+
+fn bpm_command_upgrade<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let v = Option::<String>::deserialize(d)?;
+    Ok(match v.as_deref() {
+        Some(OLD_BPM_COMMAND) => default_bpm_command(),
+        _ => v,
+    })
+}
 
 fn default_bpm_command() -> Option<String> {
     Some(DEFAULT_BPM_COMMAND.into())
@@ -338,5 +354,27 @@ fn run(
                 },
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_bpm_default_is_upgraded() {
+        let c: ActionOutConfig =
+            serde_json::from_str(r#"{"osc":null,"bpm_command":"Master 3.1 At {bpm}"}"#).unwrap();
+        assert_eq!(c.bpm_command.as_deref(), Some(DEFAULT_BPM_COMMAND));
+        let c: ActionOutConfig = serde_json::from_str(r#"{"osc":null}"#).unwrap();
+        assert_eq!(c.bpm_command.as_deref(), Some(DEFAULT_BPM_COMMAND));
+        let c: ActionOutConfig =
+            serde_json::from_str(r#"{"osc":null,"bpm_command":"Master 3.2 At BPM {bpm}"}"#)
+                .unwrap();
+        assert_eq!(c.bpm_command.as_deref(), Some("Master 3.2 At BPM {bpm}"));
+        assert_eq!(
+            bpm_command(DEFAULT_BPM_COMMAND, 127.96),
+            "Master 3.1 At BPM 128.0"
+        );
     }
 }

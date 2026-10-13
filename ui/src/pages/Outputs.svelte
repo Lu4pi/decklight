@@ -123,7 +123,7 @@
         <label>Präfix <input placeholder="gma3" bind:value={draft.actions.osc_prefix} disabled={conn.readonly} /></label>
       </div>
       <label>Tempo an die MA3 (BPM des Master-Decks, leer = aus)
-        <input placeholder="Master 3.1 At {'{bpm}'}" value={draft.actions.bpm_command ?? ""} disabled={conn.readonly}
+        <input placeholder="Master 3.1 At BPM {'{bpm}'}" value={draft.actions.bpm_command ?? ""} disabled={conn.readonly}
           onchange={(e) => draft && (draft.actions.bpm_command = nullable((e.target as HTMLInputElement).value))} />
       </label>
       <label>Phasen-Sync (auf jeder „1“, bei Tempowechsel auf jedem Beat; leer = aus)
