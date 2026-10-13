@@ -93,6 +93,7 @@ pub async fn watch(args: WatchArgs) -> Result<()> {
         link: link_config(&args.net)?,
         master_mode: parse_master(&args.master)?,
         db_query_port: Some(args.net.db_port),
+        nfs_portmap_port: decklight_core::nfs_port_for(args.net.db_port),
         ..Default::default()
     })
     .await

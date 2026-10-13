@@ -111,6 +111,7 @@ impl Settings {
             master_mode: self.master_mode,
             timecode: self.timecode_config(),
             db_query_port: Some(self.network.db_port),
+            nfs_portmap_port: decklight_core::nfs_port_for(self.network.db_port),
             usb_exports: self.network.usb_exports.clone(),
             actions: self.actions.clone(),
             ..Default::default()

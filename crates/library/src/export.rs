@@ -269,7 +269,8 @@ impl Export {
             .is_file()
     }
 
-    fn file(&self, export_path: &str) -> PathBuf {
+    /// Lokaler Pfad zu einem Pfad aus der Datenbank (`/PIONEER/...`).
+    pub fn file(&self, export_path: &str) -> PathBuf {
         let mut p = self.root.clone();
         for part in export_path
             .split(['/', '\\'])

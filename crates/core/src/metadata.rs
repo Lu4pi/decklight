@@ -33,13 +33,16 @@ type OpenExport = (Option<std::time::SystemTime>, Arc<Export>);
 pub(crate) struct Exports {
     roots: Vec<PathBuf>,
     open: Mutex<HashMap<PathBuf, OpenExport>>,
+    /// NFS-Zugriff auf die Medien in den Playern.
+    media: Option<Media>,
 }
 
 impl Exports {
-    pub(crate) fn new(roots: Vec<PathBuf>) -> Self {
+    pub(crate) fn new(roots: Vec<PathBuf>, media: Option<Media>) -> Self {
         Self {
             roots,
             open: Mutex::default(),
+            media,
         }
     }
 
@@ -76,6 +79,12 @@ impl Exports {
     }
 }
 
+/// NFS-Zugriff auf die Medien in den Playern.
+pub(crate) struct Media {
+    pub port: u16,
+    pub cache: decklight_library::MediaCache,
+}
+
 pub(crate) async fn run(
     mut rx: mpsc::UnboundedReceiver<FetchRequest>,
     shared: Arc<Mutex<Shared>>,
@@ -97,7 +106,8 @@ pub(crate) async fn run(
         let (shared, events, in_flight) = (shared.clone(), events.clone(), in_flight.clone());
         let exports = exports.clone();
         tokio::spawn(async move {
-            if !fetch(req, &shared, &events, epoch, own_number, query_port).await {
+            let media = exports.media.as_ref();
+            if !fetch(req, &shared, &events, epoch, own_number, query_port, media).await {
                 from_export(req, &shared, &events, epoch, &exports).await;
             }
             if let Ok(mut busy) = in_flight.lock() {
@@ -156,6 +166,7 @@ async fn fetch(
     epoch: Instant,
     own_number: u8,
     query_port: u16,
+    media: Option<&Media>,
 ) -> bool {
     let r = req.track;
     let loc = TrackLocation {
@@ -179,9 +190,15 @@ async fn fetch(
                 .find(|d| d.number == r.source_player)
                 .and_then(|d| d.ip.parse::<IpAddr>().ok());
             let present: Vec<u8> = s.engine.decks().map(|d| d.number).collect();
-            ip.map(|ip| (ip, asking_player(own_number, r.source_player, &present)))
+            ip.map(|ip| {
+                let asking = asking_player(own_number, r.source_player, &present);
+                // Ausgedachte Nummer (kein zweiter Player 1–4 da): der dbserver
+                // lehnt das meist ab, also gleich vom Medium lesen.
+                let invented = asking != own_number && !present.contains(&asking);
+                (ip, asking, invented)
+            })
         };
-        let Some((ip, asking)) = target else {
+        let Some((ip, asking, invented)) = target else {
             if Instant::now() > wait_for_device {
                 tracing::warn!(
                     player = r.source_player,
@@ -192,6 +209,11 @@ async fn fetch(
             tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
         };
+        if let Some(m) = media.filter(|_| attempt == 0 && invented) {
+            if from_media(req, ip, m, shared, events, epoch).await {
+                return true;
+            }
+        }
         attempt += 1;
         match load_track(ip, query_port, asking, loc).await {
             Ok(data) => {
@@ -200,6 +222,11 @@ async fn fetch(
             }
             Err(e) => {
                 tracing::warn!(attempt, player = r.source_player, id = r.rekordbox_id, error = %e, "Metadaten nicht geladen");
+                if let Some(m) = media.filter(|_| attempt == 1 && !invented) {
+                    if from_media(req, ip, m, shared, events, epoch).await {
+                        return true;
+                    }
+                }
                 if attempt == ATTEMPTS {
                     if let Ok(mut s) = shared.lock() {
                         s.monitor.warn(
@@ -216,6 +243,37 @@ async fn fetch(
         }
     }
     false
+}
+
+/// Track vom Medium im Player lesen (NFS). `true` bei Erfolg.
+async fn from_media(
+    req: FetchRequest,
+    ip: IpAddr,
+    media: &Media,
+    shared: &Arc<Mutex<Shared>>,
+    events: &broadcast::Sender<Stamped>,
+    epoch: Instant,
+) -> bool {
+    let r = req.track;
+    match media
+        .cache
+        .track_via(ip, media.port, r.slot.to_byte(), r.rekordbox_id)
+        .await
+    {
+        Ok(data) => {
+            tracing::info!(
+                player = r.source_player,
+                id = r.rekordbox_id,
+                "Metadaten per NFS vom Medium gelesen"
+            );
+            store(req, data, shared, events, epoch);
+            true
+        }
+        Err(e) => {
+            tracing::warn!(player = r.source_player, id = r.rekordbox_id, error = %e, "Medium per NFS nicht lesbar");
+            false
+        }
+    }
 }
 
 fn store(
