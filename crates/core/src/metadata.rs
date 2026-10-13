@@ -171,7 +171,7 @@ async fn fetch(
     let r = req.track;
     let loc = TrackLocation {
         slot: r.slot.to_byte(),
-        track_type: 1,
+        track_type: if r.track_type == 0 { 1 } else { r.track_type },
         rekordbox_id: r.rekordbox_id,
     };
     // Status-Pakete kommen oft vor dem ersten Keep-Alive: auf die IP des Players

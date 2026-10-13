@@ -137,7 +137,11 @@ impl DbClient {
         let d = self.dmst(menu::MAIN, &loc);
         let avail = self
             .request(
-                kind::REKORDBOX_METADATA,
+                if loc.track_type == 2 {
+                    kind::UNANALYZED_METADATA
+                } else {
+                    kind::REKORDBOX_METADATA
+                },
                 vec![d.clone(), Field::n4(loc.rekordbox_id)],
             )
             .await?;

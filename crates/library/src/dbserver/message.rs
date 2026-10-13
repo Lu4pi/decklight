@@ -14,6 +14,8 @@ pub mod kind {
     pub const SETUP: u16 = 0x0000;
     pub const TEARDOWN: u16 = 0x0100;
     pub const REKORDBOX_METADATA: u16 = 0x2002;
+    /// Metadaten nicht analysierter Dateien (nur Tags, kein Grid, keine Wellenform).
+    pub const UNANALYZED_METADATA: u16 = 0x2202;
     pub const ARTWORK: u16 = 0x2003;
     pub const BEAT_GRID: u16 = 0x2204;
     pub const ANLZ_TAG: u16 = 0x2c04;

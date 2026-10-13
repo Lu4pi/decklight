@@ -13,6 +13,8 @@ pub struct TrackRef {
     pub source_player: u8,
     pub slot: TrackSlot,
     pub rekordbox_id: u32,
+    /// 1 = rekordbox-analysiert, 2 = nicht analysiert, 5 = CD (aus dem CdjStatus).
+    pub track_type: u8,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +117,7 @@ impl DeckState {
             source_player: s.track_source_player,
             slot: s.track_slot,
             rekordbox_id: s.rekordbox_id,
+            track_type: s.track_type,
         });
         if track != self.track {
             if self.track.is_some() {
