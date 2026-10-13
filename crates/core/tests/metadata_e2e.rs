@@ -45,14 +45,24 @@ async fn loads_metadata_for_every_loaded_track() {
     ));
 
     let mut titles = Vec::new();
+    // F3: Metadaten spätestens 2 s nach dem Laden des Tracks.
+    let mut loaded_at = std::collections::HashMap::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while titles.len() < 2 {
         let ev = tokio::time::timeout_at(deadline, events.recv())
             .await
             .expect("keine Metadaten in 5 s")
             .unwrap();
-        if let EngineEvent::TrackInfo { title, .. } = ev.event {
-            titles.push(title);
+        match ev.event {
+            EngineEvent::TrackLoaded { track, .. } => {
+                loaded_at.entry(track).or_insert(ev.t);
+            }
+            EngineEvent::TrackInfo { title, track, .. } => {
+                let since = ev.t - loaded_at.get(&track).copied().unwrap_or(0.0);
+                assert!(since < 2.0, "{title}: {since:.2} s nach dem Laden");
+                titles.push(title);
+            }
+            _ => {}
         }
     }
     titles.sort();
