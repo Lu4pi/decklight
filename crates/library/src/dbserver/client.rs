@@ -237,6 +237,36 @@ impl DbClient {
     /// Detail-Wellenform: die Drei-Band-Variante des CDJ-3000 (`PWV7` aus
     /// `2EX`), sonst die RGB-Variante (`PWV5` aus `EXT`).
     pub async fn waveform(&mut self, loc: TrackLocation) -> Result<Waveform, DbError> {
+        if loc.track_type != 1 {
+            return self.blue_waveform(loc).await;
+        }
+        match self.color_waveform(loc).await {
+            Ok(w) => Ok(w),
+            Err(_) => self.blue_waveform(loc).await,
+        }
+    }
+
+    /// Einfarbige Detail-Wellenform (auch für nicht analysierte Dateien).
+    pub async fn blue_waveform(&mut self, loc: TrackLocation) -> Result<Waveform, DbError> {
+        let mut last = DbError::NotFound;
+        for m in [menu::MAIN, menu::DATA] {
+            let d = self.dmst(m, &loc);
+            match self
+                .blob(
+                    kind::WAVE_DETAIL,
+                    kind::WAVE_DETAIL_RESPONSE,
+                    vec![d, Field::n4(loc.rekordbox_id), Field::n4(0)],
+                )
+                .await
+            {
+                Ok(blob) => return anlz::parse_blue_detail(&blob).ok_or(DbError::NotFound),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
+    async fn color_waveform(&mut self, loc: TrackLocation) -> Result<Waveform, DbError> {
         if let Ok(blob) = self.anlz_tag(loc, b"PWV7", b"2EX").await {
             if let Some(w) = anlz::find_tag(&blob, b"PWV7").and_then(anlz::parse_pwv7) {
                 if !w.bands.is_empty() {

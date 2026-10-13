@@ -209,7 +209,9 @@ async fn fetch(
             tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
         };
-        if let Some(m) = media.filter(|_| attempt == 0 && invented) {
+        // Nur rekordbox-Tracks stehen in der export.pdb auf dem Stick.
+        let analyzed = r.track_type <= 1;
+        if let Some(m) = media.filter(|_| attempt == 0 && invented && analyzed) {
             if from_media(req, ip, m, shared, events, epoch).await {
                 return true;
             }
@@ -222,7 +224,7 @@ async fn fetch(
             }
             Err(e) => {
                 tracing::warn!(attempt, player = r.source_player, id = r.rekordbox_id, error = %e, "Metadaten nicht geladen");
-                if let Some(m) = media.filter(|_| attempt == 1 && !invented) {
+                if let Some(m) = media.filter(|_| attempt == 1 && !invented && analyzed) {
                     if from_media(req, ip, m, shared, events, epoch).await {
                         return true;
                     }
