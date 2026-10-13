@@ -116,7 +116,7 @@ async fn serve(mut s: TcpStream, source: Arc<dyn TrackSource>) -> std::io::Resul
                 vec![Field::n4(0), Field::n4(1)],
             )],
             kind::TEARDOWN => return Ok(()),
-            kind::REKORDBOX_METADATA => {
+            kind::REKORDBOX_METADATA | kind::UNANALYZED_METADATA => {
                 pending = source
                     .track(slot, id)
                     .map(|t| menu_items(&t))
@@ -128,10 +128,7 @@ async fn serve(mut s: TcpStream, source: Arc<dyn TrackSource>) -> std::io::Resul
                 };
                 vec![reply(
                     kind::MENU_AVAILABLE,
-                    vec![
-                        Field::n4(u32::from(kind::REKORDBOX_METADATA)),
-                        Field::n4(count),
-                    ],
+                    vec![Field::n4(u32::from(m.kind)), Field::n4(count)],
                 )]
             }
             kind::RENDER_MENU => {
@@ -171,6 +168,24 @@ async fn serve(mut s: TcpStream, source: Arc<dyn TrackSource>) -> std::io::Resul
                     _ => None,
                 });
                 vec![blob_reply(kind::ANLZ_TAG, kind::ANLZ_TAG_RESPONSE, blob)]
+            }
+            kind::WAVE_DETAIL => {
+                let blob = source.track(slot, id).and_then(|t| {
+                    t.waveform.map(|w| {
+                        let mut b = vec![0u8; 19];
+                        b.extend(w.columns.iter().map(|c| {
+                            let light =
+                                (c.rgb.iter().map(|&v| u16::from(v)).sum::<u16>() * 7 / 765) as u8;
+                            (c.height & 0x1f) | (light.min(7) << 5)
+                        }));
+                        b
+                    })
+                });
+                vec![blob_reply(
+                    kind::WAVE_DETAIL,
+                    kind::WAVE_DETAIL_RESPONSE,
+                    blob,
+                )]
             }
             other => vec![reply(
                 kind::MENU_AVAILABLE,

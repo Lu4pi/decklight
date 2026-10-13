@@ -133,6 +133,31 @@ pub fn encode_pqtz(beats: &[GridBeat]) -> Vec<u8> {
 
 /// PWV5: farbige Detail-Wellenform, 150 Spalten pro Sekunde, je 2 Bytes:
 /// Rot 3 Bit, Grün 3 Bit, Blau 3 Bit, Höhe 5 Bit, 2 Bit ungenutzt.
+/// Blaue Detail-Wellenform aus einer dbserver-Antwort (0x4a02): 19 Bytes
+/// Vorspann, dann ein Byte je Spalte (Höhe in Bit 0–4, Helligkeit in Bit 5–7).
+pub fn parse_blue_detail(blob: &[u8]) -> Option<Waveform> {
+    const JUNK: usize = 19;
+    let data = blob.get(JUNK..).filter(|d| !d.is_empty())?;
+    let lerp = |a: u8, b: u8, t: u8| {
+        (u16::from(a) + (u16::from(b) - u16::from(a)) * u16::from(t) / 7) as u8
+    };
+    let columns = data
+        .iter()
+        .map(|&b| {
+            let t = (b >> 5) & 7;
+            WaveColumn {
+                height: b & 0x1f,
+                rgb: [lerp(0, 190, t), lerp(90, 225, t), lerp(200, 255, t)],
+            }
+        })
+        .collect();
+    Some(Waveform {
+        per_second: 150.0,
+        columns,
+        bands: Vec::new(),
+    })
+}
+
 pub fn parse_pwv5(tag: &[u8]) -> Option<Waveform> {
     if tag.get(..4)? != b"PWV5" {
         return None;

@@ -127,6 +127,11 @@ impl Engine {
                     switched_to: *switched_to,
                 }]
             }
+            LinkEvent::NoInterface { device } => vec![EngineEvent::NoInterface {
+                number: device.number,
+                name: device.name.clone(),
+                ip: device.ip.to_string(),
+            }],
             LinkEvent::Packet { packet, .. } => self.handle_packet(t, packet),
         }
     }

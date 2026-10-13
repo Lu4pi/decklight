@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 /// Wohin Aktionen gehen.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionOutConfig {
     /// OSC-Ziel, z. B. die grandMA3 auf Port 8000.
     pub osc: Option<SocketAddr>,
@@ -26,6 +26,69 @@ pub struct ActionOutConfig {
     /// MIDI-Ausgang für Note/CC (Teil des Namens).
     #[serde(default)]
     pub midi_port: Option<String>,
+    /// MA3-Befehl, der bei jeder Tempoänderung des Master-Decks per OSC geht,
+    /// `{bpm}` wird ersetzt (z. B. `Master 3.1 At BPM {bpm}` für Speed-Master 1).
+    /// Leer = aus. Läuft auch bei Not-Aus weiter, wie der Timecode.
+    #[serde(
+        default = "default_bpm_command",
+        deserialize_with = "bpm_command_upgrade"
+    )]
+    pub bpm_command: Option<String>,
+    /// MA3-Befehl für den Phasen-Sync, genau auf dem Beat gesendet: auf jeder
+    /// „1“ (alle 4 Beats), während einer Tempoänderung auf jedem Beat. Danach
+    /// geht sofort der Tempo-Befehl hinterher. Leer = aus.
+    #[serde(default = "default_phase_command")]
+    pub phase_command: Option<String>,
+}
+
+/// Speed-Master 1 der grandMA3 folgt dem Tempo des Master-Decks. Ohne
+/// „BPM“ setzt die MA3 den Fader-Wert statt des Tempos.
+pub const DEFAULT_BPM_COMMAND: &str = "Master 3.1 At BPM {bpm}";
+
+/// Frühere Voreinstellung ohne „BPM“; gespeicherte Einstellungen damit werden
+/// beim Laden auf [`DEFAULT_BPM_COMMAND`] gehoben.
+pub const OLD_BPM_COMMAND: &str = "Master 3.1 At {bpm}";
+
+fn bpm_command_upgrade<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let v = Option::<String>::deserialize(d)?;
+    Ok(match v.as_deref() {
+        Some(OLD_BPM_COMMAND) => default_bpm_command(),
+        _ => v,
+    })
+}
+
+fn default_bpm_command() -> Option<String> {
+    Some(DEFAULT_BPM_COMMAND.into())
+}
+
+/// „Learn“ auf dem Beat richtet die Phase von Speed-Master 1 aus.
+pub const DEFAULT_PHASE_COMMAND: &str = "Learn Master 3.1";
+
+fn default_phase_command() -> Option<String> {
+    Some(DEFAULT_PHASE_COMMAND.into())
+}
+
+/// So lange nach der letzten Tempoänderung auf jedem Beat synchronisieren.
+const TEMPO_CHANGE_WINDOW: Duration = Duration::from_secs(3);
+
+impl Default for ActionOutConfig {
+    fn default() -> Self {
+        Self {
+            osc: None,
+            osc_prefix: String::new(),
+            midi_port: None,
+            bpm_command: default_bpm_command(),
+            phase_command: default_phase_command(),
+        }
+    }
+}
+
+/// Tempo höchstens so oft an das Pult schicken.
+const BPM_INTERVAL: Duration = Duration::from_millis(100);
+
+/// `{bpm}` im Befehl ersetzen, eine Nachkommastelle.
+pub fn bpm_command(template: &str, bpm: f64) -> String {
+    template.replace("{bpm}", &format!("{bpm:.1}"))
 }
 
 pub(crate) struct TriggerThread {
@@ -143,6 +206,10 @@ fn run(
     let mut rx = events.subscribe();
     let tick = Duration::from_millis(2);
     let mut next = Instant::now();
+    let bpm_template = cfg.bpm_command.clone().filter(|c| !c.trim().is_empty());
+    let mut bpm_sent: Option<(f64, Instant)> = None;
+    let phase_template = cfg.phase_command.clone().filter(|c| !c.trim().is_empty());
+    let mut tempo_changed: Option<Instant> = None;
 
     while !stop.load(Ordering::Relaxed) {
         next += tick;
@@ -199,6 +266,46 @@ fn run(
                 })
                 .collect();
             firings.extend(engine.update(t, &inputs, master, &s.triggers));
+            // Tempoquelle: Master-Deck, sonst (ein CDJ ohne Sync-Master) das
+            // spielende Deck.
+            let source = master
+                .and_then(|m| s.engine.deck(m))
+                .or_else(|| s.engine.decks().find(|d| d.moving));
+            let source_number = source.map(|d| d.number);
+            let bpm = source
+                .and_then(|d| d.effective_bpm())
+                .map(|b| (b * 10.0).round() / 10.0);
+            // Phasen-Sync genau auf dem Beat des Quell-Decks.
+            if let (Some(phase), Some(osc)) = (&phase_template, dispatcher.osc.as_ref()) {
+                let changing = tempo_changed.is_some_and(|at| at.elapsed() < TEMPO_CHANGE_WINDOW);
+                let on_beat = deck_events.iter().any(|e| {
+                    matches!(e, EngineEvent::Beat { deck, beat_in_bar, .. }
+                        if Some(*deck) == source_number && (*beat_in_bar == 1 || changing))
+                });
+                if on_beat {
+                    if let Err(e) = osc.command(phase) {
+                        tracing::debug!(error = %e, "Phasen-Sync nicht gesendet");
+                    }
+                    if let (Some(template), Some(b)) = (&bpm_template, bpm) {
+                        let _ = osc.command(&bpm_command(template, b));
+                        bpm_sent = Some((b, Instant::now()));
+                    }
+                }
+            }
+            if let Some(template) = &bpm_template {
+                let due = bpm_sent.is_none_or(|(last, at)| {
+                    bpm.is_some_and(|b| (b - last).abs() >= 0.05) && at.elapsed() >= BPM_INTERVAL
+                });
+                if let (Some(b), true, Some(osc)) = (bpm, due, dispatcher.osc.as_ref()) {
+                    if let Err(e) = osc.command(&bpm_command(template, b)) {
+                        tracing::debug!(error = %e, "Tempo nicht gesendet");
+                    }
+                    if bpm_sent.is_some() {
+                        tempo_changed = Some(Instant::now());
+                    }
+                    bpm_sent = Some((b, Instant::now()));
+                }
+            }
         }
         if firings.is_empty() {
             continue;
@@ -247,5 +354,27 @@ fn run(
                 },
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_bpm_default_is_upgraded() {
+        let c: ActionOutConfig =
+            serde_json::from_str(r#"{"osc":null,"bpm_command":"Master 3.1 At {bpm}"}"#).unwrap();
+        assert_eq!(c.bpm_command.as_deref(), Some(DEFAULT_BPM_COMMAND));
+        let c: ActionOutConfig = serde_json::from_str(r#"{"osc":null}"#).unwrap();
+        assert_eq!(c.bpm_command.as_deref(), Some(DEFAULT_BPM_COMMAND));
+        let c: ActionOutConfig =
+            serde_json::from_str(r#"{"osc":null,"bpm_command":"Master 3.2 At BPM {bpm}"}"#)
+                .unwrap();
+        assert_eq!(c.bpm_command.as_deref(), Some("Master 3.2 At BPM {bpm}"));
+        assert_eq!(
+            bpm_command(DEFAULT_BPM_COMMAND, 127.96),
+            "Master 3.1 At BPM 128.0"
+        );
     }
 }

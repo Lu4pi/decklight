@@ -1,28 +1,32 @@
 <script lang="ts">
-  // Desktop-Oberfläche: Kopfzeile mit Timecode und Not-Aus, Reiter für die Bereiche.
+  // Desktop-Oberfläche im Pult-Stil: Reiter links, Werkzeuge rechts, Decks unten.
   import { conn } from "../lib/conn.svelte";
-  import type { MasterMode } from "../lib/types";
-  import Decks from "./Decks.svelte";
+  import Live from "./Live.svelte";
+  import Viewer from "./Viewer.svelte";
   import Setlist from "./Setlist.svelte";
   import Cues from "./Cues.svelte";
   import Outputs from "./Outputs.svelte";
   import Monitoring from "./Monitoring.svelte";
   import Toast from "../components/Toast.svelte";
   import ShowDialog from "../components/ShowDialog.svelte";
+  import PhoneDialog from "../components/PhoneDialog.svelte";
+  import MiniDecks from "../components/MiniDecks.svelte";
+  import Logo from "../components/Logo.svelte";
   import { toast } from "../lib/toast.svelte";
 
   const tabs = [
-    ["decks", "Decks"],
-    ["setlist", "Setlist & Offsets"],
-    ["cues", "Cues & Trigger"],
-    ["outputs", "Ausgänge"],
-    ["monitoring", "Monitoring"],
+    ["viewer", "Viewer"],
+    ["live", "Live"],
+    ["setlist", "Set List"],
+    ["cues", "Cue List"],
   ] as const;
-  type Tab = (typeof tabs)[number][0];
+  const all = ["viewer", "live", "setlist", "cues", "outputs", "monitoring"] as const;
+  type Tab = (typeof all)[number];
 
   function fromHash(): Tab {
     const h = location.hash.slice(1);
-    return (tabs.find((t) => t[0] === h)?.[0] ?? "decks") as Tab;
+    if (h === "decks") return "live";
+    return (all.find((t) => t === h) ?? "live") as Tab;
   }
   let tab = $state<Tab>(fromHash());
   $effect(() => {
@@ -33,6 +37,7 @@
 
   const s = $derived(conn.state);
   let showsOpen = $state(false);
+  let phoneOpen = $state(false);
   const warnCount = $derived(conn.monitor?.warnings.filter((w) => w.level === "error").length ?? 0);
 
   async function panic() {
@@ -43,22 +48,11 @@
     const r = await conn.command({ cmd: "set_armed", armed: true });
     if (!r.ok) toast(r.error ?? "Fehler", "error");
   }
-  async function setMaster(e: Event) {
-    const v = (e.target as HTMLSelectElement).value;
-    const mode: MasterMode =
-      v === "on_air" ? { mode: "on_air" } : v === "tempo_master" ? { mode: "tempo_master" } : { mode: "manual", deck: Number(v) };
-    const r = await conn.command({ cmd: "set_master_mode", mode });
-    if (!r.ok) toast(r.error ?? "Fehler", "error");
-  }
-  const masterValue = $derived(
-    !s ? "on_air" : s.master_mode.mode === "manual" ? String(s.master_mode.deck) : s.master_mode.mode,
-  );
-
   // Not-Aus: Esc. Wieder scharf: Strg/Cmd + Umschalt + A.
   $effect(() => {
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest?.("input, textarea, select");
-      if (e.key === "Escape" && !typing && !showsOpen) {
+      if (e.key === "Escape" && !typing && !showsOpen && !phoneOpen) {
         e.preventDefault();
         panic();
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "a") {
@@ -73,58 +67,59 @@
 
 <div class="app">
   <header>
-    <div class="brand">
-      <span class="logo">◐</span> DeckLight
-      <span class="dot" class:on={conn.connected} title={conn.connected ? "Verbunden" : "Keine Verbindung zum Kern"}></span>
-    </div>
-
+    <Logo size={17} />
     <button class="showname" onclick={() => (showsOpen = true)} title="Shows speichern, öffnen, sichern">
-      <span class="label">Show</span>
-      {conn.show?.name || "Ohne Namen"} ▾
+      {conn.show?.name || "Ohne Namen"}
     </button>
-
-    <div class="tc" class:running={s?.timecode.running} title="Timecode-Ausgang">
-      <span class="tcval">{s?.timecode.enabled ? (s?.timecode.text ?? "--:--:--:--") : "TC aus"}</span>
-      <span class="tcinfo">{s?.timecode.deck ? `Deck ${s.timecode.deck}` : "kein Master"}</span>
+    <div class="leds">
+      <span class="led" class:on={conn.connected} title={conn.connected ? "Verbunden" : "Keine Verbindung zum Kern"}>LINK</span>
+      <span class="led" class:on={s?.timecode.enabled && s.timecode.running} title="Timecode-Ausgang">TC</span>
+      <span class="led" class:on={s?.armed} class:bad={s && !s.armed} title="Trigger scharf">ARM</span>
     </div>
-
-    <label class="master">
-      Master
-      <select value={masterValue} onchange={setMaster} disabled={conn.readonly}>
-        <option value="on_air">On Air / Fader</option>
-        <option value="tempo_master">Tempo-Master</option>
-        {#each s?.decks ?? [] as d}
-          <option value={String(d.number)}>Deck {d.number} fest</option>
-        {/each}
-      </select>
-    </label>
-
-    <div class="spacer"></div>
-
-    {#if s?.armed}
-      <button class="panic" onclick={panic} disabled={conn.readonly} title="Not-Aus (Esc)">NOT-AUS</button>
-    {:else}
-      <button class="arm" onclick={arm} disabled={conn.readonly} title="Wieder scharf (Strg+Umschalt+A)">
-        GESPERRT · scharf schalten
-      </button>
-    {/if}
   </header>
 
-  <nav>
-    {#each tabs as [id, label]}
-      <a href="#{id}" class:active={tab === id}>
-        {label}
-        {#if id === "monitoring" && warnCount > 0}<span class="count">{warnCount}</span>{/if}
+  <div class="bar">
+    <nav>
+      {#each tabs as [id, label]}
+        <a href="#{id}" class:active={tab === id}>{label}</a>
+      {/each}
+      {#if conn.readonly}<span class="ro">nur lesend</span>{/if}
+    </nav>
+    <div class="tools">
+      <button class="tool" onclick={() => (showsOpen = true)} title="Shows speichern, öffnen, sichern">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><circle cx="7.5" cy="12" r="1.3" class="f" /><circle cx="12" cy="12" r="1.3" class="f" /><circle cx="16.5" cy="12" r="1.3" class="f" /></svg>
+        <span>Show</span>
+      </button>
+      <button class="tool" onclick={() => (phoneOpen = true)} title="Auf Handy oder Tablet öffnen">
+        <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M10.5 18.5h3" /></svg>
+        <span>Handy</span>
+      </button>
+      <a class="tool" class:active={tab === "outputs"} href="#outputs" title="Netzwerk, Timecode, OSC/MIDI">
+        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4" /></svg>
+        <span>Netzwerk</span>
       </a>
-    {/each}
-    {#if conn.readonly}<span class="ro">nur lesend</span>{/if}
-  </nav>
+      <a class="tool" class:active={tab === "monitoring"} href="#monitoring" title="Geräte, Warnungen, Verlauf">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></svg>
+        <span>Utility</span>
+        {#if warnCount > 0}<span class="count">{warnCount}</span>{/if}
+      </a>
+      {#if s?.armed}
+        <button class="panic" onclick={panic} disabled={conn.readonly} title="Not-Aus (Esc)">NOT-AUS</button>
+      {:else}
+        <button class="arm" onclick={arm} disabled={conn.readonly} title="Wieder scharf (Strg+Umschalt+A)">
+          GESPERRT<small>scharf schalten</small>
+        </button>
+      {/if}
+    </div>
+  </div>
 
   <main>
     {#if !conn.connected && !s}
       <p class="waiting">Warte auf den DeckLight-Kern …</p>
-    {:else if tab === "decks"}
-      <Decks />
+    {:else if tab === "live"}
+      <Live />
+    {:else if tab === "viewer"}
+      <Viewer />
     {:else if tab === "setlist"}
       <Setlist />
     {:else if tab === "cues"}
@@ -135,8 +130,10 @@
       <Monitoring />
     {/if}
   </main>
+  {#if s && s.decks.length > 0}<MiniDecks />{/if}
   <Toast />
   {#if showsOpen}<ShowDialog onclose={() => (showsOpen = false)} />{/if}
+  {#if phoneOpen}<PhoneDialog onclose={() => (phoneOpen = false)} />{/if}
 </div>
 
 <style>
@@ -144,83 +141,138 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh;
   }
   header {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    gap: 18px;
-    padding: 10px 16px;
-    background: var(--surface);
+    gap: 12px;
+    padding: 6px 12px;
+    background: #000;
     border-bottom: 1px solid var(--border);
   }
-  .brand {
-    font-weight: 800;
-    font-size: 18px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .logo {
-    color: var(--accent);
-  }
-  .dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--danger);
-  }
-  .dot.on {
-    background: var(--ok);
-  }
   .showname {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    line-height: 1.15;
-    background: transparent;
-    border: 1px solid var(--border);
-    padding: 4px 10px;
-    font-weight: 600;
-    max-width: 220px;
+    background: none;
+    border: none;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-size: 14px;
+    max-width: 40vw;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .showname .label {
-    font-size: 10px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 400;
+  .leds {
+    justify-self: end;
+    display: flex;
+    gap: 6px;
   }
-  .tc {
+  .led {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+  .led.on {
+    background: #1fae3a;
+    border-color: #1fae3a;
+    color: #000;
+  }
+  .led.bad {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+  }
+  .bar {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  nav {
+    display: flex;
+    gap: 3px;
+    align-items: stretch;
+  }
+  nav a {
+    display: grid;
+    place-items: center;
+    min-width: 92px;
+    padding: 10px 14px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  nav a.active {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .ro {
+    align-self: center;
+    margin-left: 8px;
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .tools {
+    display: flex;
+    gap: 4px;
+    align-items: stretch;
+  }
+  .tool {
+    position: relative;
     display: flex;
     flex-direction: column;
-    line-height: 1.1;
-  }
-  .tcval {
-    font-family: var(--mono);
-    font-size: 26px;
-    font-weight: 700;
-    color: var(--text-dim);
-    letter-spacing: 0.04em;
-  }
-  .tc.running .tcval {
-    color: var(--accent);
-  }
-  .tcinfo {
-    font-size: 11px;
-    color: var(--text-dim);
-  }
-  .master {
-    display: flex;
     align-items: center;
-    gap: 8px;
-    color: var(--text-dim);
-    font-size: 13px;
+    justify-content: center;
+    gap: 2px;
+    min-width: 58px;
+    padding: 4px 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    text-decoration: none;
+    color: var(--text);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
-  .spacer {
-    flex: 1;
+  .tool.active {
+    border-color: var(--accent);
+  }
+  .tool svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+  }
+  .tool svg .f {
+    fill: currentColor;
+    stroke: none;
+  }
+  .count {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    background: var(--danger);
+    color: #fff;
+    border-radius: 7px;
+    padding: 0 5px;
+    font-size: 9px;
   }
   .panic {
     background: var(--danger);
@@ -228,62 +280,53 @@
     border: none;
     font-weight: 800;
     letter-spacing: 0.08em;
-    padding: 10px 22px;
-    border-radius: 8px;
-    font-size: 15px;
+    padding: 6px 16px;
+    border-radius: 3px;
+    font-size: 14px;
   }
   .arm {
     background: transparent;
     color: var(--danger);
     border: 2px solid var(--danger);
-    font-weight: 700;
-    padding: 8px 16px;
-    border-radius: 8px;
+    font-weight: 800;
+    padding: 4px 10px;
+    border-radius: 3px;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
     animation: blink 1s steps(2) infinite;
+  }
+  .arm small {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
   }
   @keyframes blink {
     50% {
       opacity: 0.55;
     }
   }
-  nav {
-    display: flex;
-    gap: 2px;
-    padding: 0 12px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    align-items: center;
-  }
-  nav a {
-    padding: 10px 14px;
-    color: var(--text-dim);
-    text-decoration: none;
-    border-bottom: 2px solid transparent;
-    font-size: 14px;
-  }
-  nav a.active {
-    color: var(--text);
-    border-bottom-color: var(--accent);
-  }
-  .count {
-    background: var(--danger);
-    color: #fff;
-    border-radius: 8px;
-    padding: 0 6px;
-    font-size: 11px;
-    margin-left: 4px;
-  }
-  .ro {
-    margin-left: auto;
-    color: var(--text-dim);
-    font-size: 12px;
-  }
   main {
     flex: 1;
     overflow: auto;
-    padding: 14px 16px;
+    padding: 6px 8px;
   }
   .waiting {
     color: var(--text-dim);
+  }
+  @media (max-width: 700px) {
+    header {
+      grid-template-columns: auto 1fr;
+    }
+    .showname {
+      display: none;
+    }
+    nav a {
+      min-width: 0;
+      padding: 8px 8px;
+    }
+    .tool {
+      min-width: 44px;
+    }
   }
 </style>

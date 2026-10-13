@@ -23,6 +23,12 @@ pub enum EngineEvent {
         #[serde(default)]
         switched_to: Option<u8>,
     },
+    /// Gerät in einem Netz, das dieser Rechner nicht hat.
+    NoInterface {
+        number: u8,
+        name: String,
+        ip: String,
+    },
     TrackLoaded {
         deck: u8,
         track: TrackRef,

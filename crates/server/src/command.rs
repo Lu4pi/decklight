@@ -70,6 +70,8 @@ pub enum Command {
         settings: Box<Settings>,
     },
     ClearHistory,
+    /// Windows: Firewall-Regel für DeckLight anlegen (nur vom eigenen Rechner).
+    FixFirewall,
     /// Laufende Show unter einem Namen speichern (ohne Namen: unter dem aktuellen).
     ShowSave {
         #[serde(default)]
@@ -133,6 +135,7 @@ pub fn apply(core: &Core, cmd: Command, rate: FrameRate) -> Reply {
             core.panic();
             Reply::ok()
         }
+        Command::FixFirewall => Reply::err("Firewall-Freigabe läuft über den Server"),
         Command::SetArmed { id: None, armed } => {
             core.set_armed(armed);
             Reply::ok()

@@ -91,11 +91,13 @@ pub async fn run(args: RunArgs) -> Result<()> {
         }),
         offsets,
         db_query_port: Some(args.net.db_port),
+        nfs_portmap_port: decklight_core::nfs_port_for(args.net.db_port),
         triggers,
         actions: ActionOutConfig {
             osc: args.osc,
             osc_prefix: args.osc_prefix.clone(),
             midi_port: args.midi.clone(),
+            ..Default::default()
         },
         ..Default::default()
     })

@@ -131,3 +131,16 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 
 ---
 
+
+## Phase 9: Pult-Design und Handy
+
+- [x] Oberfläche im Pult-Stil: Reiter Viewer, Live, Set List, Cue List; Werkzeuge Show, Handy, Netzwerk, Utility; Sieben-Segment-Timecode (grün läuft, gelb Loop, weiß steht); Deck-Leiste unten
+- [x] Live: Master-Zeile mit aktuellem/nächstem Cue, je Deck Wellenform, Cover, eigener Track-Timecode, BPM, Master-Umschaltung
+- [x] Viewer: Deck-Köpfe plus gestapelte Detail-Wellenformen (4/8/16 s)
+- [x] Cue List: aktueller und nächster Cue groß, Countdown in Sekunden
+- [x] Desktop-App liefert die Oberfläche selbst ans Netz aus (`/monitor` vom Handy ohne `ui/dist`)
+- [x] Handy-Dialog mit QR-Code, PIN und Bedienrecht; `/api/access` (nur lokal)
+- [x] `/monitor` als Handy-Ansicht mit Player-Karten; Web-App-Manifest für den Home-Bildschirm
+- [ ] Am echten iPhone/Android im Club-WLAN testen (Lars)
+- [x] Echttest 13.10.: CDJ erkannt, aber keine Decks → virtueller Player folgt jetzt dem Netz der Player, Warnung ohne passende Netzwerkkarte, Paketzähler je Port, Windows-Firewall-Regel (Installer + Knopf unter Monitoring), Logdatei `decklight.log`
+- [ ] Erneuter Test am Laptop mit Ethernet-Link zum CDJ-Switch (Lars)

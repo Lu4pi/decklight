@@ -32,6 +32,7 @@ export interface TrackSummary {
   bpm: number | null;
   has_artwork: boolean;
   loaded: boolean;
+  wave: number;
   offset_ms: number | null;
 }
 
@@ -53,6 +54,8 @@ export interface DeckView {
   master: boolean;
   info: TrackSummary | null;
   timecode_ms: number | null;
+  /** Track-Timecode als HH:MM:SS:FF, nur mit Offset. */
+  timecode: string | null;
 }
 
 export interface StateView {
@@ -61,7 +64,14 @@ export interface StateView {
   master_mode: MasterMode;
   armed: boolean;
   decks: DeckView[];
-  timecode: { text: string | null; deck: number | null; running: boolean; errors: number; enabled: boolean };
+  timecode: {
+    text: string | null;
+    deck: number | null;
+    running: boolean;
+    errors: number;
+    enabled: boolean;
+    rate: FrameRate;
+  };
   mixer_bpm: number | null;
 }
 
@@ -96,7 +106,17 @@ export interface LogEntry {
   error: string | null;
 }
 
+export interface LinkView {
+  number: number | null;
+  ip: string | null;
+  /** Empfangene Pakete je Port: 50000, 50001, 50002. */
+  packets: [number, number, number];
+  /** Windows: Firewall-Regel vorhanden; sonst null. */
+  firewall_ok: boolean | null;
+}
+
 export interface MonitorView {
+  link: LinkView;
   devices: DeviceInfo[];
   warnings: Warning[];
   history: HistoryEntry[];
@@ -184,7 +204,7 @@ export interface Settings {
     artnet_port: number;
     mtc_port: string | null;
   };
-  actions: { osc: string | null; osc_prefix: string; midi_port: string | null };
+  actions: { osc: string | null; osc_prefix: string; midi_port: string | null; bpm_command: string | null; phase_command: string | null };
   web: { pin: string | null; allow_lan_control: boolean };
 }
 

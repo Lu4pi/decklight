@@ -7,6 +7,19 @@
   const m = $derived(conn.monitor);
   const kinds: Record<string, string> = { player: "Player", mixer: "Mixer", rekordbox: "rekordbox", other: "Gerät" };
 
+  // Player im Netz, aber kein Status an uns: DeckLight ist bei ihnen nicht angemeldet.
+  const noStatus = $derived(
+    !!m && m.devices.some((d) => d.kind === "player") && m.link.packets[2] === 0 && !conn.state?.decks.length,
+  );
+  let fixing = $state(false);
+  async function fixFirewall() {
+    fixing = true;
+    const r = await conn.command({ cmd: "fix_firewall" });
+    fixing = false;
+    if (r.ok) toast("Firewall freigegeben");
+    else toast(r.error ?? "Fehler", "error");
+  }
+
   async function clearHistory() {
     const r = await conn.command({ cmd: "clear_history" });
     if (!r.ok) toast(r.error ?? "Fehler", "error");
@@ -29,6 +42,28 @@
           {/each}
         </tbody>
       </table>
+      <div class="facts">
+        <span>DeckLight: <b>{m.link.ip ? `#${m.link.number} · ${m.link.ip}` : "nur zuhören"}</b></span>
+        <span title="Empfangene Pakete: Ankündigung (50000) · Beat (50001) · Status (50002)">
+          Pakete: <b class="mono">{m.link.packets.join(" · ")}</b>
+        </span>
+        {#if m.link.firewall_ok != null}
+          <span>
+            Firewall: <b class:bad={!m.link.firewall_ok}>{m.link.firewall_ok ? "freigegeben" : "nicht freigegeben"}</b>
+            {#if !m.link.firewall_ok}
+              <button class="small" disabled={conn.readonly || fixing} onclick={fixFirewall}>Firewall freigeben</button>
+            {/if}
+          </span>
+        {/if}
+        <a class="btn small" href={url("/api/log.txt")} download>Log-Datei</a>
+      </div>
+      {#if noStatus}
+        <p class="hint">
+          Die Player schicken DeckLight keinen Status, deshalb erscheinen keine Decks. Unter Netzwerk die Netzwerkkarte zum
+          CDJ-Netz wählen. Fehlt sie dort, hat sie keine IP: unter Windows fest <code>169.254.10.10</code> /
+          <code>255.255.0.0</code> eintragen.
+        </p>
+      {/if}
       {#if conn.state}
         <div class="facts">
           <span>Master: <b>{conn.state.master ?? "–"}</b></span>
@@ -185,5 +220,15 @@
   }
   .small {
     font-size: 12px;
+  }
+  .hint {
+    color: var(--tc-loop);
+    font-size: 13px;
+    margin: 8px 0 0;
+  }
+  button.small {
+    font-size: 11px;
+    padding: 1px 8px;
+    margin-left: 6px;
   }
 </style>

@@ -64,6 +64,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         ServerConfig {
             bind: SocketAddr::new(ip, args.port),
             ui_dir: Some(args.ui_dir.clone()),
+            ui_assets: None,
         },
     )
     .await?;

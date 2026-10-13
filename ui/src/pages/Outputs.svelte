@@ -5,7 +5,9 @@
   import type { Settings } from "../lib/types";
 
   let draft = $state<Settings | null>(null);
-  let interfaces = $state<{ name: string; ip: string; broadcast: string }[]>([]);
+  let interfaces = $state<{ name: string; ip: string; broadcast: string; inactive?: string }[]>([]);
+  const usable = $derived(interfaces.filter((i) => !i.inactive));
+  const inactive = $derived(interfaces.filter((i) => i.inactive));
   let midiPorts = $state<string[]>([]);
   let saving = $state(false);
   let oscTest = $state("Go+ Exec 201");
@@ -96,8 +98,8 @@
         </label>
         <label>Port <input type="number" bind:value={draft.timecode.artnet_port} disabled={conn.readonly} /></label>
       </div>
-      {#if interfaces.length}
-        <div class="hint">Broadcast deiner Netze: {interfaces.map((i) => `${i.broadcast} (${i.name})`).join(", ")}</div>
+      {#if usable.length}
+        <div class="hint">Broadcast deiner Netze: {usable.map((i) => `${i.broadcast} (${i.name})`).join(", ")}</div>
       {/if}
       <label>MTC an MIDI-Ausgang
         <select value={draft.timecode.mtc_port ?? ""} disabled={conn.readonly}
@@ -120,6 +122,18 @@
         </label>
         <label>Präfix <input placeholder="gma3" bind:value={draft.actions.osc_prefix} disabled={conn.readonly} /></label>
       </div>
+      <label>Tempo an die MA3 (BPM des Master-Decks, leer = aus)
+        <input placeholder="Master 3.1 At BPM {'{bpm}'}" value={draft.actions.bpm_command ?? ""} disabled={conn.readonly}
+          onchange={(e) => draft && (draft.actions.bpm_command = nullable((e.target as HTMLInputElement).value))} />
+      </label>
+      <label>Phasen-Sync (auf jeder „1“, bei Tempowechsel auf jedem Beat; leer = aus)
+        <input placeholder="Learn Master 3.1" value={draft.actions.phase_command ?? ""} disabled={conn.readonly}
+          onchange={(e) => draft && (draft.actions.phase_command = nullable((e.target as HTMLInputElement).value))} />
+      </label>
+      <div class="hint">
+        Geht bei jeder Tempoänderung per OSC raus, <code>{'{bpm}'}</code> wird ersetzt. <code>Master 3.1</code> ist
+        Speed-Master 1; in der MA3 Effekte/Phaser diesem Speed-Master zuweisen.
+      </div>
       <div class="row">
         <input class="grow" bind:value={oscTest} disabled={conn.readonly} />
         <button onclick={() => test("osc")} disabled={conn.readonly || dirty}>OSC testen</button>
@@ -141,9 +155,22 @@
         <select value={draft.network.iface ?? ""} disabled={conn.readonly}
           onchange={(e) => draft && (draft.network.iface = nullable((e.target as HTMLSelectElement).value))}>
           <option value="">automatisch</option>
-          {#each interfaces as i}<option value={i.name}>{i.name} · {i.ip}</option>{/each}
+          {#each usable as i}<option value={i.name}>{i.name} · {i.ip}</option>{/each}
+          {#if draft.network.iface && !usable.some((i) => i.name === draft?.network.iface)}
+            <option value={draft.network.iface}>{draft.network.iface} (nicht gefunden)</option>
+          {/if}
+          {#each inactive as i}<option value={i.name} disabled>{i.name} · {i.ip} ({i.inactive})</option>{/each}
         </select>
       </label>
+      {#each inactive as i}
+        <div class="hint warn">{i.name} ({i.ip}) ist nicht nutzbar: {i.inactive}.</div>
+      {/each}
+      <div class="hint">
+        Es erscheinen nur Netzwerkkarten mit IPv4-Adresse. Fehlt die Karte zum CDJ-Netz, hat sie keinen Link (Kabel,
+        Switch-LED, Adapter prüfen) oder keine Adresse: in Windows fest <code>169.254.10.10</code> /
+        <code>255.255.0.0</code> eintragen.
+        <button class="link" onclick={loadLists}>Liste aktualisieren</button>
+      </div>
       <div class="row">
         <label>Eigene Player-Nummer
           <select bind:value={draft.network.player} disabled={conn.readonly}>

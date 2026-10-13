@@ -44,7 +44,7 @@ impl LinkSnapshot {
                 self.devices.remove(&d.number);
                 self.players.remove(&d.number);
             }
-            LinkEvent::NumberConflict { .. } => {}
+            LinkEvent::NumberConflict { .. } | LinkEvent::NoInterface { .. } => {}
             LinkEvent::Packet { packet, .. } => self.apply_packet(packet),
         }
     }

@@ -14,9 +14,15 @@ pub mod kind {
     pub const SETUP: u16 = 0x0000;
     pub const TEARDOWN: u16 = 0x0100;
     pub const REKORDBOX_METADATA: u16 = 0x2002;
+    /// Metadaten nicht analysierter Dateien (nur Tags, kein Grid, keine Wellenform).
+    pub const UNANALYZED_METADATA: u16 = 0x2202;
     pub const ARTWORK: u16 = 0x2003;
     pub const BEAT_GRID: u16 = 0x2204;
     pub const ANLZ_TAG: u16 = 0x2c04;
+    /// Blaue Detail-Wellenform; der CDJ-3000 liefert sie auch für Dateien, die
+    /// er selbst analysiert hat (ohne rekordbox).
+    pub const WAVE_DETAIL: u16 = 0x2904;
+    pub const WAVE_DETAIL_RESPONSE: u16 = 0x4a02;
     pub const RENDER_MENU: u16 = 0x3000;
 
     pub const MENU_AVAILABLE: u16 = 0x4000;

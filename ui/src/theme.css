@@ -1,23 +1,42 @@
-/* Design-Grundlagen: dunkel, hoher Kontrast, eine Farbe pro Deck. */
+/* Design: Bühnenpult-Optik. Schwarzer Grund, dichte dunkle Felder, blaue
+   Titelbalken, großer Sieben-Segment-Timecode (grün läuft, gelb Loop, weiß steht). */
+@font-face {
+  font-family: "DSEG7";
+  src: url("./assets/fonts/DSEG7Classic-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: block;
+}
+
 :root {
   color-scheme: dark;
-  --bg: #0b0d10;
-  --surface: #14181d;
-  --surface-2: #1c2128;
-  --border: #2a313a;
-  --text: #e8ecf1;
-  --text-dim: #8a94a3;
-  --accent: #ffb020;
-  --danger: #ff4d4f;
+  --bg: #000;
+  --surface: #0b0b0f;
+  --surface-2: #17171f;
+  --surface-3: #22222c;
+  --border: #2b2b37;
+  --text: #f2f2f6;
+  --text-dim: #8c8c9c;
+  --accent: #2f6fe8;
+  --danger: #e3262b;
   --ok: #3ddc84;
+  --bar: #3d44b4;
+  --bar-hi: #5059d0;
+  --tc-run: #3cf03c;
+  --tc-loop: #f4e434;
+  --tc-stop: #f2f2f2;
+  --tc-off: #4a4a56;
+  --onair: #e3262b;
+  --beat: #f0782a;
+  --tag: #e6d21c;
   --deck-1: #2fa8ff;
   --deck-2: #ff8a1f;
   --deck-3: #b36bff;
   --deck-4: #3ddc84;
   --deck-5: #ff4fa3;
   --deck-6: #f5d90a;
-  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  --seg: "DSEG7", var(--mono);
 }
 
 * {
@@ -60,7 +79,7 @@ button,
 .btn {
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 3px;
   padding: 6px 12px;
   cursor: pointer;
   text-decoration: none;
@@ -80,7 +99,7 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #111;
+  color: #fff;
   font-weight: 700;
 }
 
@@ -88,7 +107,7 @@ button.link {
   background: none;
   border: none;
   padding: 2px 6px;
-  color: var(--accent);
+  color: #7aa2ff;
 }
 
 button.link.danger {
@@ -107,7 +126,7 @@ select,
 textarea {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 3px;
   padding: 6px 8px;
 }
 
@@ -126,4 +145,24 @@ input[type="color"] {
   padding: 0;
   width: 44px;
   height: 30px;
+}
+
+/* Kleine Großbuchstaben-Beschriftung wie auf einem Pult. */
+.cap {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Blauer Titelbalken über einem Deck. */
+.titlebar {
+  background: linear-gradient(var(--bar-hi), var(--bar));
+  color: #fff;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

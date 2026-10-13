@@ -79,13 +79,23 @@ impl Settings {
         let virtual_player = if n.passive {
             None
         } else {
-            let iface = pick_interface(n.iface.as_deref())
-                .context("Keine Schnittstelle zum CDJ-Netz gefunden")?;
-            Some(VirtualPlayer::on_interface(&iface, n.player))
+            match (pick_interface(n.iface.as_deref()), &n.iface) {
+                (Ok(iface), _) => Some(VirtualPlayer::on_interface(&iface, n.player)),
+                // Automatisch, aber (noch) keine Karte mit IP, etwa weil das
+                // Kabel erst später steckt: warten und dem ersten Player folgen.
+                (Err(e), None) => {
+                    tracing::warn!(error = %e, "Noch keine Netzwerkkarte, warte auf Player");
+                    Some(VirtualPlayer::waiting(n.player))
+                }
+                (Err(e), Some(_)) => {
+                    return Err(e).context("Keine Schnittstelle zum CDJ-Netz gefunden")
+                }
+            }
         };
         Ok(LinkConfig {
             ports: PortConfig::from_base(n.port_base),
             virtual_player,
+            follow_devices: n.iface.is_none(),
             ..Default::default()
         })
     }
@@ -101,6 +111,7 @@ impl Settings {
             master_mode: self.master_mode,
             timecode: self.timecode_config(),
             db_query_port: Some(self.network.db_port),
+            nfs_portmap_port: decklight_core::nfs_port_for(self.network.db_port),
             usb_exports: self.network.usb_exports.clone(),
             actions: self.actions.clone(),
             ..Default::default()

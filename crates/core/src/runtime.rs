@@ -51,6 +51,15 @@ pub struct CoreConfig {
     /// Rekordbox-Exporte (Wurzel eines Sticks oder einer Kopie) als Rückfall,
     /// wenn ein Player keine Metadaten liefert.
     pub usb_exports: Vec<std::path::PathBuf>,
+    /// Portmapper der Player für den NFS-Zugriff auf ihre Medien (`None` = aus;
+    /// echte Player: 111). Wird genutzt, wenn der dbserver nichts liefert.
+    pub nfs_portmap_port: Option<u16>,
+}
+
+/// NFS nur gegen echte Player (Standard-dbserver-Port), nicht im Simulator.
+pub fn nfs_port_for(db_port: u16) -> Option<u16> {
+    (db_port == decklight_library::dbserver::QUERY_PORT)
+        .then_some(decklight_library::nfs::PORTMAP_PORT)
 }
 
 /// Gemeinsamer Zustand, geschützt durch einen Mutex.
@@ -168,7 +177,15 @@ impl Core {
             own_number,
             cfg.db_query_port
                 .unwrap_or(decklight_library::dbserver::QUERY_PORT),
-            Arc::new(metadata::Exports::new(cfg.usb_exports.clone())),
+            Arc::new(metadata::Exports::new(
+                cfg.usb_exports.clone(),
+                cfg.nfs_portmap_port.map(|port| metadata::Media {
+                    port,
+                    cache: decklight_library::MediaCache::new(
+                        std::env::temp_dir().join("decklight-media"),
+                    ),
+                }),
+            )),
         )));
 
         let outputs = Outputs::spawn(cfg.timecode, cfg.actions, epoch, &shared, &events);

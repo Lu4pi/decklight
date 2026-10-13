@@ -8,7 +8,7 @@ use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -64,46 +64,204 @@ pub struct Interface {
     pub loopback: bool,
 }
 
-/// Alle IPv4-Schnittstellen, Loopback zuletzt.
+/// Alle nutzbaren IPv4-Schnittstellen, Loopback zuletzt. Unter Windows kommen
+/// Karten dazu, die nur `Get-NetIPAddress` meldet (Preferred, Adapter Up).
 pub fn interfaces() -> io::Result<Vec<Interface>> {
-    let mut out: Vec<Interface> = if_addrs::get_if_addrs()?
+    let mut out = if_addrs_list()?;
+    #[cfg(windows)]
+    for a in windows::addresses() {
+        if a.usable() && !out.iter().any(|i| i.ip == a.ip) {
+            tracing::debug!(name = %a.name, ip = %a.ip, "Karte nur über Get-NetIPAddress gefunden");
+            out.push(a.to_interface());
+        }
+    }
+    out.sort_by_key(|i| i.loopback);
+    Ok(out)
+}
+
+fn if_addrs_list() -> io::Result<Vec<Interface>> {
+    Ok(if_addrs::get_if_addrs()?
         .into_iter()
         .filter_map(|i| match i.addr {
             if_addrs::IfAddr::V4(v4) => {
                 let broadcast = v4
                     .broadcast
                     .unwrap_or_else(|| Ipv4Addr::from(u32::from(v4.ip) | !u32::from(v4.netmask)));
-                let mac = mac_address::mac_address_by_name(&i.name)
-                    .ok()
-                    .flatten()
-                    .map(|m| m.bytes());
                 Some(Interface {
                     loopback: v4.ip.is_loopback(),
+                    mac: mac_of(&i.name),
                     name: i.name,
                     ip: v4.ip,
                     netmask: v4.netmask,
                     broadcast,
-                    mac,
                 })
             }
             _ => None,
         })
-        .collect();
-    out.sort_by_key(|i| i.loopback);
-    Ok(out)
+        .collect())
 }
 
-/// Wählt eine Schnittstelle: nach Name oder IP, sonst die erste mit privater
-/// Adresse (CDJ-Netze laufen fast immer in 169.254/16, 192.168/16 oder 10/8).
+fn mac_of(name: &str) -> Option<[u8; 6]> {
+    mac_address::mac_address_by_name(name)
+        .ok()
+        .flatten()
+        .map(|m| m.bytes())
+}
+
+/// Eine IPv4-Adresse, die Windows kennt, aber nicht nutzbar ist: kein Link
+/// (Kabel, Switch), Adresskonflikt oder Prüfung läuft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InactiveInterface {
+    pub name: String,
+    pub ip: Ipv4Addr,
+    /// Kurzer Grund für die Oberfläche, z. B. „kein Link“.
+    pub reason: String,
+}
+
+/// Unter Windows die Adressen aus `Get-NetIPAddress`, die nicht in
+/// [`interfaces`] stehen. Auf anderen Systemen leer.
+pub fn inactive_interfaces() -> Vec<InactiveInterface> {
+    #[cfg(windows)]
+    {
+        let active: Vec<Ipv4Addr> = interfaces()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|i| i.ip)
+            .collect();
+        windows::addresses()
+            .into_iter()
+            .filter(|a| !active.contains(&a.ip) && !a.ip.is_loopback())
+            .map(|a| InactiveInterface {
+                reason: a.reason().to_string(),
+                name: a.name,
+                ip: a.ip,
+            })
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+/// Eine Zeile aus `Get-NetIPAddress` samt Adapterstatus.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone)]
+struct WinAddress {
+    name: String,
+    ip: Ipv4Addr,
+    prefix: u8,
+    state: String,
+    status: String,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl WinAddress {
+    fn usable(&self) -> bool {
+        self.state == "Preferred" && (self.status == "Up" || self.status.is_empty())
+    }
+
+    fn reason(&self) -> &'static str {
+        match (self.state.as_str(), self.status.as_str()) {
+            (_, "Disconnected") | (_, "Not Present") => "kein Link – Kabel/Switch prüfen",
+            (_, "Disabled") => "Adapter deaktiviert",
+            ("Duplicate", _) => "Adresse doppelt im Netz",
+            ("Tentative", _) => "Adresse wird geprüft",
+            ("Preferred", _) => "noch nicht bereit",
+            _ => "nicht nutzbar",
+        }
+    }
+
+    fn to_interface(&self) -> Interface {
+        let mask = u32::MAX
+            .checked_shl(32 - u32::from(self.prefix.min(32)))
+            .unwrap_or(0);
+        Interface {
+            name: self.name.clone(),
+            ip: self.ip,
+            netmask: Ipv4Addr::from(mask),
+            broadcast: Ipv4Addr::from(u32::from(self.ip) | !mask),
+            mac: mac_of(&self.name),
+            loopback: self.ip.is_loopback(),
+        }
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::WinAddress;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    /// PowerShell braucht rund eine Sekunde; das Ergebnis kurz merken, weil
+    /// die Ankündigungsschleife bei fehlender Karte jeden Takt nachfragt.
+    static CACHE: Mutex<Option<(Instant, Vec<WinAddress>)>> = Mutex::new(None);
+
+    pub(super) fn addresses() -> Vec<WinAddress> {
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, list)) = cache.as_ref() {
+            if at.elapsed() < Duration::from_secs(5) {
+                return list.clone();
+            }
+        }
+        let list = query();
+        *cache = Some((Instant::now(), list.clone()));
+        list
+    }
+
+    fn query() -> Vec<WinAddress> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+            Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { \
+            $s=(Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).Status; \
+            ($_.InterfaceAlias,$_.IPAddress,$_.PrefixLength,$_.AddressState,$s) -join '|' }";
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        match out {
+            Ok(o) => super::parse_windows_addresses(&String::from_utf8_lossy(&o.stdout)),
+            Err(e) => {
+                tracing::debug!("Get-NetIPAddress nicht verfügbar: {e}");
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// Zeilen `Alias|IP|Präfix|AddressState|AdapterStatus` aus PowerShell.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_windows_addresses(text: &str) -> Vec<WinAddress> {
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.trim().split('|');
+            Some(WinAddress {
+                name: f.next()?.to_string(),
+                ip: f.next()?.parse().ok()?,
+                prefix: f.next()?.parse().ok()?,
+                state: f.next().unwrap_or("").to_string(),
+                status: f.next().unwrap_or("").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Wählt eine Schnittstelle: nach Name oder IP, sonst die erste Link-Local-
+/// Adresse, dann die erste private (CDJ-Netze: 169.254/16, 192.168/16, 10/8).
 pub fn pick_interface(wanted: Option<&str>) -> io::Result<Interface> {
     let all = interfaces()?;
     let found = match wanted {
         Some(w) => all
             .into_iter()
             .find(|i| i.name == w || i.ip.to_string() == w),
+        // Link-Local (169.254) zuerst: dort hängen CDJs ohne DHCP-Router,
+        // während 192.168/10er-Netze meist das WLAN sind.
         None => all
-            .into_iter()
-            .find(|i| !i.loopback && (i.ip.is_private() || i.ip.is_link_local())),
+            .iter()
+            .find(|i| !i.loopback && i.ip.is_link_local())
+            .or_else(|| all.iter().find(|i| !i.loopback && i.ip.is_private()))
+            .cloned(),
     };
     found.ok_or_else(|| {
         io::Error::new(
@@ -141,6 +299,18 @@ impl VirtualPlayer {
         }
     }
 
+    /// Noch ohne Netzwerkkarte: meldet sich erst an, wenn ein Player in einem
+    /// Netz auftaucht, das dieser Rechner hat (nur mit `follow_devices`).
+    pub fn waiting(number: u8) -> Self {
+        Self {
+            name: "DeckLight".into(),
+            number,
+            ip: Ipv4Addr::UNSPECIFIED,
+            mac: [0; 6],
+            broadcast: Ipv4Addr::UNSPECIFIED,
+        }
+    }
+
     fn keep_alive(&self, peers_seen: u8) -> KeepAlive {
         KeepAlive {
             name: self.name.clone(),
@@ -161,6 +331,10 @@ pub struct LinkConfig {
     /// Ohne virtuellen Player kommen nur Broadcasts an (Keep-Alive, Beats).
     /// CDJ-Status schicken die Player gezielt an angemeldete Geräte.
     pub virtual_player: Option<VirtualPlayer>,
+    /// Der virtuelle Player zieht auf die Schnittstelle um, in deren Netz die
+    /// Player stehen (wenn keine Schnittstelle fest eingestellt ist). Sonst
+    /// meldet er sich z. B. im WLAN an und die CDJs schicken ihm keinen Status.
+    pub follow_devices: bool,
 }
 
 impl Default for LinkConfig {
@@ -170,6 +344,7 @@ impl Default for LinkConfig {
             ports: PortConfig::STANDARD,
             device_timeout: DEFAULT_DEVICE_TIMEOUT,
             virtual_player: None,
+            follow_devices: false,
         }
     }
 }
@@ -186,6 +361,11 @@ pub enum LinkEvent {
         /// Auf diese freie Nummer ist DeckLight ausgewichen.
         switched_to: Option<u8>,
     },
+    /// Ein Gerät steht in keinem Netz, das dieser Rechner hat: DeckLight kann
+    /// sich dort nicht anmelden und bekommt keinen Player-Status.
+    NoInterface {
+        device: Device,
+    },
     Packet {
         from: SocketAddr,
         #[serde(skip)]
@@ -201,6 +381,8 @@ pub struct Link {
     tasks: Vec<JoinHandle<()>>,
     local_ports: PortConfig,
     own_number: Arc<AtomicU8>,
+    own_ip: Arc<AtomicU32>,
+    counts: Arc<[AtomicU64; 3]>,
 }
 
 impl Link {
@@ -224,9 +406,16 @@ impl Link {
         let ctx = Ctx {
             events: events.clone(),
             devices: devices.clone(),
-            own_ip: config.virtual_player.as_ref().map(|v| v.ip),
+            own_ip: Arc::new(AtomicU32::new(
+                config
+                    .virtual_player
+                    .as_ref()
+                    .map_or(0, |v| u32::from(v.ip)),
+            )),
             own_number: own_number.clone(),
+            counts: Arc::new(Default::default()),
         };
+        let counts = ctx.counts.clone();
         tasks.push(tokio::spawn(receive(
             ctx.clone(),
             announce.clone(),
@@ -242,6 +431,7 @@ impl Link {
             Arc::new(status),
             Channel::Status,
         )));
+        let own_ip = ctx.own_ip.clone();
         tasks.push(tokio::spawn(expire(ctx, config.device_timeout)));
 
         if let Some(vp) = config.virtual_player.clone() {
@@ -258,6 +448,8 @@ impl Link {
                 target,
                 devices.clone(),
                 own_number.clone(),
+                config.follow_devices.then(|| own_ip.clone()),
+                events.clone(),
             )));
         }
 
@@ -267,6 +459,8 @@ impl Link {
             tasks,
             local_ports,
             own_number,
+            own_ip,
+            counts,
         })
     }
 
@@ -288,6 +482,19 @@ impl Link {
         }
     }
 
+    /// IP, mit der sich DeckLight bei den Playern anmeldet; ohne virtuellen Player `None`.
+    pub fn own_ip(&self) -> Option<Ipv4Addr> {
+        match self.own_ip.load(Ordering::Relaxed) {
+            0 => None,
+            ip => Some(Ipv4Addr::from(ip)),
+        }
+    }
+
+    /// Empfangene Pakete je Port seit dem Start: Ankündigung, Beat, Status.
+    pub fn packet_counts(&self) -> [u64; 3] {
+        [0, 1, 2].map(|i| self.counts[i].load(Ordering::Relaxed))
+    }
+
     pub fn local_ports(&self) -> PortConfig {
         self.local_ports
     }
@@ -307,8 +514,10 @@ impl Drop for Link {
 struct Ctx {
     events: broadcast::Sender<LinkEvent>,
     devices: Arc<Mutex<DeviceTable>>,
-    own_ip: Option<Ipv4Addr>,
+    /// Eigene IP des virtuellen Players, 0 ohne.
+    own_ip: Arc<AtomicU32>,
     own_number: Arc<AtomicU8>,
+    counts: Arc<[AtomicU64; 3]>,
 }
 
 fn bind_udp(ip: Ipv4Addr, port: u16) -> io::Result<UdpSocket> {
@@ -333,12 +542,20 @@ async fn receive(ctx: Ctx, socket: Arc<UdpSocket>, channel: Channel) {
                 continue;
             }
         };
+        let slot = match channel {
+            Channel::Announce => 0,
+            Channel::Beat => 1,
+            Channel::Status => 2,
+        };
+        ctx.counts[slot].fetch_add(1, Ordering::Relaxed);
         let Some(packet) = packet::parse(channel, &buf[..len]) else {
             continue;
         };
         let at = Instant::now();
         if let Packet::KeepAlive(ka) = &packet {
-            if ctx.own_ip == Some(ka.ip) && ctx.own_number.load(Ordering::Relaxed) == ka.number {
+            if ctx.own_ip.load(Ordering::Relaxed) == u32::from(ka.ip)
+                && ctx.own_number.load(Ordering::Relaxed) == ka.number
+            {
                 continue; // unser eigenes Echo
             }
             note_keep_alive(&ctx, ka, at);
@@ -361,7 +578,7 @@ fn note_keep_alive(ctx: &Ctx, ka: &KeepAlive, at: Instant) {
         }
     };
     let own = ctx.own_number.load(Ordering::Relaxed);
-    if ctx.own_ip.is_some() && own == device.number {
+    if ctx.own_ip.load(Ordering::Relaxed) != 0 && own == device.number {
         // Das andere Gerät war zuerst da oder ist ein echter Player: ausweichen.
         let taken: Vec<u8> = ctx
             .devices
@@ -398,6 +615,19 @@ async fn expire(ctx: Ctx, timeout: Duration) {
     }
 }
 
+/// Schnittstelle, in deren Teilnetz `ip` liegt.
+pub fn interface_for(ip: Ipv4Addr) -> Option<Interface> {
+    interfaces()
+        .ok()?
+        .into_iter()
+        .find(|i| !i.loopback && same_subnet(i.ip, ip, i.netmask))
+}
+
+fn same_subnet(a: Ipv4Addr, b: Ipv4Addr, mask: Ipv4Addr) -> bool {
+    let m = u32::from(mask);
+    u32::from(a) & m == u32::from(b) & m
+}
+
 /// Erst zuhören, welche Nummern belegt sind, dann eine freie nehmen.
 pub const LISTEN_BEFORE_ANNOUNCE: Duration = Duration::from_millis(1800);
 
@@ -418,7 +648,12 @@ async fn announce_loop(
     target: SocketAddrV4,
     devices: Arc<Mutex<DeviceTable>>,
     own_number: Arc<AtomicU8>,
+    follow: Option<Arc<AtomicU32>>,
+    events: broadcast::Sender<LinkEvent>,
 ) {
+    let mut target = target;
+    let mut checked: Vec<Ipv4Addr> = Vec::new();
+    let mut warned: Vec<Ipv4Addr> = Vec::new();
     tokio::time::sleep(LISTEN_BEFORE_ANNOUNCE).await;
     let wanted = own_number.load(Ordering::Relaxed);
     let taken: Vec<u8> = devices
@@ -438,6 +673,55 @@ async fn announce_loop(
     let mut tick = tokio::time::interval(KEEP_ALIVE_INTERVAL);
     loop {
         tick.tick().await;
+        if let Some(own_ip) = &follow {
+            // Neue Geräte-IPs einmal prüfen: liegt der Player in einem anderen
+            // Netz als wir, auf dessen Schnittstelle umziehen.
+            let fresh: Vec<Device> = devices
+                .lock()
+                .map(|t| t.list())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|d| !checked.contains(&d.ip))
+                .collect();
+            for device in fresh {
+                let ip = device.ip;
+                if ip.is_loopback() {
+                    checked.push(ip);
+                    continue; // Simulator auf diesem Rechner
+                }
+                // Fehlt die passende Karte, bei jedem Takt erneut suchen:
+                // bekommt das Kabel später eine IP, ziehen wir ohne Neustart um.
+                let Some(iface) = interface_for(ip) else {
+                    if !warned.contains(&ip) {
+                        warned.push(ip);
+                        tracing::warn!(device = %device.name, %ip, "Kein Netzwerkanschluss im Netz dieses Geräts");
+                        let _ = events.send(LinkEvent::NoInterface { device });
+                    }
+                    continue;
+                };
+                checked.push(ip);
+                if iface.ip != vp.ip {
+                    tracing::info!(
+                        from = %vp.ip,
+                        to = %iface.ip,
+                        iface = %iface.name,
+                        player = %ip,
+                        "Virtueller Player zieht ins Netz der Player um"
+                    );
+                    vp.ip = iface.ip;
+                    vp.broadcast = iface.broadcast;
+                    if let Some(mac) = iface.mac {
+                        vp.mac = mac;
+                    }
+                    own_ip.store(u32::from(iface.ip), Ordering::Relaxed);
+                    target = SocketAddrV4::new(iface.broadcast, target.port());
+                }
+                break;
+            }
+        }
+        if vp.ip.is_unspecified() {
+            continue; // noch keine Karte im Netz der Player
+        }
         vp.number = own_number.load(Ordering::Relaxed);
         let peers = devices.lock().map(|t| t.len()).unwrap_or(0);
         let bytes = encode::keep_alive(&vp.keep_alive(u8::try_from(peers + 1).unwrap_or(u8::MAX)));
@@ -450,6 +734,43 @@ async fn announce_loop(
 #[cfg(test)]
 mod number_tests {
     use super::free_number;
+
+    #[test]
+    fn windows_address_lines() {
+        let list = super::parse_windows_addresses(
+            "Ethernet|169.254.10.10|16|Preferred|Disconnected\r\nEthernet 3|169.254.10.10|16|Preferred|Up\r\nWLAN|192.168.1.206|24|Duplicate|Up\r\nkaputt\r\n",
+        );
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].reason(), "kein Link – Kabel/Switch prüfen");
+        assert!(!list[0].usable());
+        assert!(list[1].usable());
+        let i = list[1].to_interface();
+        assert_eq!(
+            i.netmask,
+            "255.255.0.0".parse::<std::net::Ipv4Addr>().unwrap()
+        );
+        assert_eq!(
+            i.broadcast,
+            "169.254.255.255".parse::<std::net::Ipv4Addr>().unwrap()
+        );
+        assert_eq!(list[2].reason(), "Adresse doppelt im Netz");
+    }
+
+    #[test]
+    fn subnet_match() {
+        use super::same_subnet;
+        let m16 = "255.255.0.0".parse().unwrap();
+        assert!(same_subnet(
+            "169.254.3.4".parse().unwrap(),
+            "169.254.200.1".parse().unwrap(),
+            m16
+        ));
+        assert!(!same_subnet(
+            "192.168.1.2".parse().unwrap(),
+            "169.254.200.1".parse().unwrap(),
+            m16
+        ));
+    }
 
     #[test]
     fn picks_wanted_or_next_free_and_never_one_to_four() {

@@ -118,6 +118,7 @@ pub async fn soak(args: SoakArgs) -> Result<()> {
         ServerConfig {
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             ui_dir: None,
+            ui_assets: None,
         },
     )
     .await?;

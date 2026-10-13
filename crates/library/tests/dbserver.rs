@@ -150,3 +150,24 @@ fn asking_player_never_uses_target_or_high_numbers() {
     assert_eq!(asking_player(7, 4, &[4]), 3);
     assert_eq!(asking_player(5, 1, &[1, 5, 6]), 4);
 }
+
+/// Nicht analysierte MP3 auf einem CDJ-3000: Titel aus den Tags und die blaue
+/// Detail-Wellenform, die der Player selbst berechnet hat.
+#[tokio::test]
+async fn unanalyzed_file_gets_title_and_blue_waveform() {
+    let local = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let server = DbServer::start(local, 0, Arc::new(One(sample())))
+        .await
+        .unwrap();
+    let loc = TrackLocation {
+        slot: 3,
+        track_type: 2,
+        rekordbox_id: 4711,
+    };
+    let data = load_track(local, server.query_port, 4, loc).await.unwrap();
+    assert_eq!(data.metadata.title, "Nachtlicht");
+    let w = data.waveform.unwrap();
+    assert_eq!(w.columns.len(), 1500);
+    assert_eq!(w.columns[31].height, 31);
+    assert!(w.bands.is_empty());
+}

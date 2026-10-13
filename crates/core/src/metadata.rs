@@ -2,7 +2,7 @@
 
 use crate::runtime::{content_key, track_key, Shared};
 use decklight_engine::{BeatGrid, EngineEvent, Stamped, TrackRef};
-use decklight_library::dbserver::client::asking_player;
+use decklight_library::dbserver::client::{asking_player, DbClient};
 use decklight_library::export::Export;
 use decklight_library::{load_track, TrackData, TrackLocation};
 use decklight_show::{OffsetTable, TrackKey, TriggerTable};
@@ -33,13 +33,16 @@ type OpenExport = (Option<std::time::SystemTime>, Arc<Export>);
 pub(crate) struct Exports {
     roots: Vec<PathBuf>,
     open: Mutex<HashMap<PathBuf, OpenExport>>,
+    /// NFS-Zugriff auf die Medien in den Playern.
+    media: Option<Media>,
 }
 
 impl Exports {
-    pub(crate) fn new(roots: Vec<PathBuf>) -> Self {
+    pub(crate) fn new(roots: Vec<PathBuf>, media: Option<Media>) -> Self {
         Self {
             roots,
             open: Mutex::default(),
+            media,
         }
     }
 
@@ -76,6 +79,12 @@ impl Exports {
     }
 }
 
+/// NFS-Zugriff auf die Medien in den Playern.
+pub(crate) struct Media {
+    pub port: u16,
+    pub cache: decklight_library::MediaCache,
+}
+
 pub(crate) async fn run(
     mut rx: mpsc::UnboundedReceiver<FetchRequest>,
     shared: Arc<Mutex<Shared>>,
@@ -97,7 +106,8 @@ pub(crate) async fn run(
         let (shared, events, in_flight) = (shared.clone(), events.clone(), in_flight.clone());
         let exports = exports.clone();
         tokio::spawn(async move {
-            if !fetch(req, &shared, &events, epoch, own_number, query_port).await {
+            let media = exports.media.as_ref();
+            if !fetch(req, &shared, &events, epoch, own_number, query_port, media).await {
                 from_export(req, &shared, &events, epoch, &exports).await;
             }
             if let Ok(mut busy) = in_flight.lock() {
@@ -156,11 +166,12 @@ async fn fetch(
     epoch: Instant,
     own_number: u8,
     query_port: u16,
+    media: Option<&Media>,
 ) -> bool {
     let r = req.track;
     let loc = TrackLocation {
         slot: r.slot.to_byte(),
-        track_type: 1,
+        track_type: if r.track_type == 0 { 1 } else { r.track_type },
         rekordbox_id: r.rekordbox_id,
     };
     // Status-Pakete kommen oft vor dem ersten Keep-Alive: auf die IP des Players
@@ -179,9 +190,15 @@ async fn fetch(
                 .find(|d| d.number == r.source_player)
                 .and_then(|d| d.ip.parse::<IpAddr>().ok());
             let present: Vec<u8> = s.engine.decks().map(|d| d.number).collect();
-            ip.map(|ip| (ip, asking_player(own_number, r.source_player, &present)))
+            ip.map(|ip| {
+                let asking = asking_player(own_number, r.source_player, &present);
+                // Ausgedachte Nummer (kein zweiter Player 1–4 da): der dbserver
+                // lehnt das meist ab, also gleich vom Medium lesen.
+                let invented = asking != own_number && !present.contains(&asking);
+                (ip, asking, invented)
+            })
         };
-        let Some((ip, asking)) = target else {
+        let Some((ip, asking, invented)) = target else {
             if Instant::now() > wait_for_device {
                 tracing::warn!(
                     player = r.source_player,
@@ -192,14 +209,36 @@ async fn fetch(
             tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
         };
+        // Nur rekordbox-Tracks stehen in der export.pdb auf dem Stick.
+        let analyzed = r.track_type <= 1;
+        if let Some(m) = media.filter(|_| attempt == 0 && invented && analyzed) {
+            if from_media(req, ip, m, shared, events, epoch).await {
+                return true;
+            }
+        }
         attempt += 1;
         match load_track(ip, query_port, asking, loc).await {
             Ok(data) => {
                 store(req, data, shared, events, epoch);
+                if loc.track_type != 1 {
+                    tokio::spawn(refresh_waveform(
+                        r,
+                        ip,
+                        query_port,
+                        asking,
+                        loc,
+                        shared.clone(),
+                    ));
+                }
                 return true;
             }
             Err(e) => {
                 tracing::warn!(attempt, player = r.source_player, id = r.rekordbox_id, error = %e, "Metadaten nicht geladen");
+                if let Some(m) = media.filter(|_| attempt == 1 && !invented && analyzed) {
+                    if from_media(req, ip, m, shared, events, epoch).await {
+                        return true;
+                    }
+                }
                 if attempt == ATTEMPTS {
                     if let Ok(mut s) = shared.lock() {
                         s.monitor.warn(
@@ -216,6 +255,97 @@ async fn fetch(
         }
     }
     false
+}
+
+fn filled(w: Option<&decklight_library::Waveform>) -> usize {
+    w.map_or(0, |w| w.columns.iter().filter(|c| c.height > 0).count())
+}
+
+/// Der CDJ-3000 analysiert nicht analysierte Dateien beim Laden selbst, die
+/// Wellenform füllt sich dabei nach und nach. Nachfragen, bis sie sich nicht
+/// mehr ändert; die Oberfläche lädt bei jeder Änderung neu.
+async fn refresh_waveform(
+    r: TrackRef,
+    ip: IpAddr,
+    query_port: u16,
+    asking: u8,
+    loc: TrackLocation,
+    shared: Arc<Mutex<Shared>>,
+) {
+    let current = |s: &Shared| {
+        let key = s.keys.get(&r)?.clone();
+        let n = filled(s.tracks.get(&key)?.waveform.as_ref());
+        Some((key, n))
+    };
+    let Some((_, mut last)) = shared.lock().ok().and_then(|s| current(&s)) else {
+        return;
+    };
+    let mut unchanged = 0;
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let still_loaded = shared
+            .lock()
+            .map(|s| s.engine.decks().any(|d| d.track == Some(r)))
+            .unwrap_or(false);
+        if !still_loaded {
+            return;
+        }
+        let Ok(mut c) = DbClient::connect_via(ip, query_port, asking).await else {
+            continue;
+        };
+        let w = c.blue_waveform(loc).await;
+        c.close().await;
+        let Ok(w) = w else { continue };
+        let n = filled(Some(&w));
+        if n > last {
+            let Ok(mut s) = shared.lock() else { return };
+            let Some((key, _)) = current(&s) else { return };
+            if let Some(old) = s.tracks.get(&key) {
+                let mut data = (**old).clone();
+                data.waveform = Some(w);
+                s.tracks.insert(key, Arc::new(data));
+            }
+            tracing::info!(filled = n, "Wellenform vom Player nachgeladen");
+            last = n;
+            unchanged = 0;
+        } else {
+            unchanged += 1;
+            if unchanged >= 3 && last > 0 {
+                return;
+            }
+        }
+    }
+}
+
+/// Track vom Medium im Player lesen (NFS). `true` bei Erfolg.
+async fn from_media(
+    req: FetchRequest,
+    ip: IpAddr,
+    media: &Media,
+    shared: &Arc<Mutex<Shared>>,
+    events: &broadcast::Sender<Stamped>,
+    epoch: Instant,
+) -> bool {
+    let r = req.track;
+    match media
+        .cache
+        .track_via(ip, media.port, r.slot.to_byte(), r.rekordbox_id)
+        .await
+    {
+        Ok(data) => {
+            tracing::info!(
+                player = r.source_player,
+                id = r.rekordbox_id,
+                "Metadaten per NFS vom Medium gelesen"
+            );
+            store(req, data, shared, events, epoch);
+            true
+        }
+        Err(e) => {
+            tracing::warn!(player = r.source_player, id = r.rekordbox_id, error = %e, "Medium per NFS nicht lesbar");
+            false
+        }
+    }
 }
 
 fn store(
