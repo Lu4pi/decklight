@@ -100,6 +100,12 @@ impl App {
             .unwrap_or_else(|e| e.into_inner().clone())
     }
 
+    /// Timecode an/aus und Bildrate, ohne die ganzen Einstellungen zu kopieren.
+    fn timecode_view_settings(&self) -> (bool, decklight_outputs::FrameRate) {
+        let s = self.settings.lock().unwrap_or_else(|e| e.into_inner());
+        (s.timecode_enabled, s.timecode.generator.rate)
+    }
+
     pub fn settings(&self) -> Settings {
         self.settings
             .lock()
@@ -298,11 +304,28 @@ fn tagged<T: Serialize>(kind: &str, body: T) -> String {
     serde_json::to_string(&Tagged { kind, body }).unwrap_or_default()
 }
 
+/// Eingebaute Oberfläche: Pfad (ohne führenden Schrägstrich) → Inhalt und MIME-Typ.
+/// Die Desktop-App reicht hier ihre eigenen Dateien durch, damit Handy und
+/// Tablet `/monitor` direkt vom DeckLight-Rechner laden können.
+#[derive(Clone)]
+pub struct UiAssets(pub Arc<AssetFn>);
+
+/// Liefert zu einem Pfad Inhalt und MIME-Typ.
+pub type AssetFn = dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync;
+
+impl std::fmt::Debug for UiAssets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UiAssets")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub bind: SocketAddr,
     /// Gebaute Oberfläche (`ui/dist`). Ohne: nur API und Hinweisseite.
     pub ui_dir: Option<PathBuf>,
+    /// Eingebaute Oberfläche, falls kein `ui_dir` angegeben ist.
+    pub ui_assets: Option<UiAssets>,
 }
 
 impl Default for ServerConfig {
@@ -310,6 +333,7 @@ impl Default for ServerConfig {
         Self {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
             ui_dir: None,
+            ui_assets: None,
         }
     }
 }
@@ -331,7 +355,10 @@ impl Server {
             .await
             .with_context(|| format!("Webserver: {} belegt", cfg.bind))?;
         let addr = listener.local_addr()?;
-        let router = router(app, cfg.ui_dir);
+        let router = match (cfg.ui_dir, cfg.ui_assets) {
+            (None, Some(assets)) => router_embedded(app, assets),
+            (dir, _) => router(app, dir),
+        };
         let task = tokio::spawn(async move {
             if let Err(e) = axum::serve(
                 listener,
@@ -348,7 +375,58 @@ impl Server {
 }
 
 pub fn router(app: Arc<App>, ui_dir: Option<PathBuf>) -> Router {
-    let api = Router::new()
+    let api = api_router(app);
+    match ui_dir.filter(|d| d.join("index.html").is_file()) {
+        Some(dir) => {
+            let index = dir.join("index.html");
+            api.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+        }
+        None => api.fallback(no_ui),
+    }
+}
+
+/// Wie [`router`], aber mit eingebauter Oberfläche.
+pub fn router_embedded(app: Arc<App>, assets: UiAssets) -> Router {
+    api_router(app).fallback(move |uri: axum::http::Uri| {
+        let assets = assets.clone();
+        async move { embedded(&assets, uri.path()) }
+    })
+}
+
+/// Eine Datei der eingebauten Oberfläche. Unbekannte Pfade ohne Dateiendung
+/// (`/monitor`, `/overlay`) bekommen die Startseite, die selbst weiterleitet.
+fn embedded(assets: &UiAssets, path: &str) -> Response {
+    let path = path.trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+    let hit = (assets.0)(path).or_else(|| {
+        let last = path.rsplit('/').next().unwrap_or(path);
+        (!last.contains('.'))
+            .then(|| (assets.0)("index.html"))
+            .flatten()
+    });
+    match hit {
+        Some((bytes, mime)) => {
+            // Gebaute Dateien tragen einen Hash im Namen und ändern sich nie.
+            let cache = if path.starts_with("assets/") {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            };
+            (
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (header::CACHE_CONTROL, cache.to_string()),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "Nicht gefunden").into_response(),
+    }
+}
+
+fn api_router(app: Arc<App>) -> Router {
+    Router::new()
         .route("/ws", get(ws))
         .route("/api/state", get(api_state))
         .route("/api/show", get(api_show))
@@ -364,15 +442,9 @@ pub fn router(app: Arc<App>, ui_dir: Option<PathBuf>) -> Router {
         .route("/api/offsets.csv", get(csv_offsets))
         .route("/api/shows", get(api_shows))
         .route("/api/shows/export", get(api_show_export))
+        .route("/api/access", get(api_access))
         .with_state(app)
-        .layer(desktop_cors());
-    match ui_dir.filter(|d| d.join("index.html").is_file()) {
-        Some(dir) => {
-            let index = dir.join("index.html");
-            api.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
-        }
-        None => api.fallback(no_ui),
-    }
+        .layer(desktop_cors())
 }
 
 /// Die Desktop-App lädt die Oberfläche von `tauri://localhost` und spricht von
@@ -525,9 +597,9 @@ async fn client(mut socket: WebSocket, app: Arc<App>, readonly: bool) {
         let msg: Option<String> = tokio::select! {
             _ = frame.tick() => {
                 let core = app.core();
-                let enabled = app.settings().timecode_enabled;
+                let (enabled, rate) = app.timecode_view_settings();
                 let t = core.now();
-                core.with(|s| tagged("state", view::state(s, t, enabled)))
+                core.with(|s| tagged("state", view::state(s, t, enabled, rate)))
             }
             _ = slow.tick() => {
                 let core = app.core();
@@ -588,8 +660,8 @@ async fn api_state(
     guarded!(app, peer, q, headers, false);
     let core = app.core();
     let t = core.now();
-    let enabled = app.settings().timecode_enabled;
-    Json(core.with(|s| view::state(s, t, enabled))).into_response()
+    let (enabled, rate) = app.timecode_view_settings();
+    Json(core.with(|s| view::state(s, t, enabled, rate))).into_response()
 }
 
 async fn api_show(
@@ -791,6 +863,90 @@ async fn api_settings(
     Json(app.settings()).into_response()
 }
 
+/// Wie Handy und Tablet den DeckLight-Rechner erreichen.
+#[derive(Serialize)]
+struct AccessView {
+    port: u16,
+    /// Adressen im Netz, private zuerst; jede mit `/monitor` und ggf. PIN.
+    urls: Vec<AccessUrl>,
+    pin: Option<String>,
+    allow_lan_control: bool,
+}
+
+#[derive(Serialize)]
+struct AccessUrl {
+    iface: String,
+    ip: String,
+    monitor: String,
+}
+
+async fn api_access(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    let web = app.settings().web;
+    let port = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.rsplit_once(':'))
+        .and_then(|(_, p)| p.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+    let pin = web.pin.filter(|p| !p.is_empty());
+    let urls = access_urls(
+        decklight_prolink::interfaces()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| !i.loopback)
+            .map(|i| (i.name, i.ip))
+            .collect(),
+        port,
+        pin.as_deref(),
+    );
+    Json(AccessView {
+        port,
+        urls,
+        pin,
+        allow_lan_control: web.allow_lan_control,
+    })
+    .into_response()
+}
+
+/// Handy-Adressen: WLAN-/Heimnetz-Adressen zuerst, Link-Local (169.254, meist
+/// das CDJ-Kabel) zuletzt, weil das Handy dort fast nie hängt.
+fn access_urls(
+    ifaces: Vec<(String, std::net::Ipv4Addr)>,
+    port: u16,
+    pin: Option<&str>,
+) -> Vec<AccessUrl> {
+    let mut list: Vec<_> = ifaces
+        .into_iter()
+        .filter(|(_, ip)| !ip.is_loopback() && !ip.is_unspecified())
+        .collect();
+    list.sort_by_key(|(_, ip)| (ip.is_link_local(), !ip.is_private()));
+    list.into_iter()
+        .map(|(iface, ip)| {
+            let mut monitor = format!("http://{ip}:{port}/monitor");
+            if let Some(p) = pin {
+                monitor.push_str("?pin=");
+                monitor.extend(p.bytes().map(|b| match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        (b as char).to_string()
+                    }
+                    _ => format!("%{b:02X}"),
+                }));
+            }
+            AccessUrl {
+                iface,
+                ip: ip.to_string(),
+                monitor,
+            }
+        })
+        .collect()
+}
+
 #[derive(Serialize)]
 struct InterfaceView {
     name: String,
@@ -891,6 +1047,50 @@ async fn csv_offsets(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_ui_serves_files_and_falls_back_to_index() {
+        let assets = UiAssets(Arc::new(|p: &str| match p {
+            "index.html" => Some((b"<html>".to_vec(), "text/html".into())),
+            "assets/app-1.js" => Some((b"js".to_vec(), "text/javascript".into())),
+            _ => None,
+        }));
+        let ok = |path: &str| embedded(&assets, path).status();
+        assert_eq!(ok("/"), StatusCode::OK);
+        assert_eq!(ok("/monitor"), StatusCode::OK);
+        assert_eq!(ok("/assets/app-1.js"), StatusCode::OK);
+        assert_eq!(ok("/assets/fehlt.js"), StatusCode::NOT_FOUND);
+        let r = embedded(&assets, "/assets/app-1.js");
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "text/javascript");
+        assert!(r.headers()[header::CACHE_CONTROL]
+            .to_str()
+            .unwrap()
+            .contains("immutable"));
+    }
+
+    #[test]
+    fn access_urls_prefer_wifi_and_carry_pin() {
+        let urls = access_urls(
+            vec![
+                ("eth0".into(), "169.254.10.2".parse().unwrap()),
+                ("wlan0".into(), "192.168.178.23".parse().unwrap()),
+            ],
+            8750,
+            Some("12 34"),
+        );
+        assert_eq!(urls[0].iface, "wlan0");
+        assert_eq!(
+            urls[0].monitor,
+            "http://192.168.178.23:8750/monitor?pin=12%2034"
+        );
+        assert_eq!(urls[1].ip, "169.254.10.2");
+        let plain = access_urls(
+            vec![("en0".into(), "10.0.0.5".parse().unwrap())],
+            8750,
+            None,
+        );
+        assert_eq!(plain[0].monitor, "http://10.0.0.5:8750/monitor");
+    }
 
     #[tokio::test]
     async fn pin_and_read_only_access() {

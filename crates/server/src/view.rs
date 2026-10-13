@@ -4,6 +4,7 @@ use base64::Engine as _;
 use decklight_core::{HistoryEntry, Shared, Warning};
 use decklight_engine::{DeckSnapshot, DeviceInfo, MasterMode};
 use decklight_library::{CuePoint, TrackData, TrackMetadata};
+use decklight_outputs::{FrameRate, Timecode};
 use decklight_show::{Cue, OffsetTable, TrackKey, TriggerTable};
 use decklight_triggers::LogEntry;
 use serde::Serialize;
@@ -32,6 +33,8 @@ pub struct DeckView {
     pub info: Option<TrackSummary>,
     /// Timecode an der aktuellen Position (Offset + Position).
     pub timecode_ms: Option<f64>,
+    /// Derselbe Timecode als HH:MM:SS:FF in der eingestellten Bildrate.
+    pub timecode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +44,7 @@ pub struct TimecodeView {
     pub running: bool,
     pub errors: u64,
     pub enabled: bool,
+    pub rate: FrameRate,
 }
 
 /// Zustand für jeden Bildschirm-Frame (30×/s).
@@ -55,7 +59,7 @@ pub struct StateView {
     pub mixer_bpm: Option<f64>,
 }
 
-pub fn state(s: &Shared, t: f64, timecode_enabled: bool) -> StateView {
+pub fn state(s: &Shared, t: f64, timecode_enabled: bool, rate: FrameRate) -> StateView {
     let snap = s.engine.snapshot(t);
     let decks = snap
         .decks
@@ -83,11 +87,13 @@ pub fn state(s: &Shared, t: f64, timecode_enabled: bool) -> StateView {
             let timecode_ms = info
                 .as_ref()
                 .and_then(|i| Some(i.offset_ms? + d.position_ms?));
+            let timecode = timecode_ms.map(|ms| Timecode::from_ms(ms.max(0.0), rate).to_string());
             DeckView {
                 master: snap.master == Some(d.number),
                 deck: d,
                 info,
                 timecode_ms,
+                timecode,
             }
         })
         .collect();
@@ -103,6 +109,7 @@ pub fn state(s: &Shared, t: f64, timecode_enabled: bool) -> StateView {
             running: s.timecode.running,
             errors: s.timecode.errors,
             enabled: timecode_enabled,
+            rate,
         },
         mixer_bpm: snap.mixer_bpm,
     }

@@ -2,7 +2,7 @@
 
 use crate::library::ShowFile;
 use crate::settings::Settings;
-use crate::{App, Server, ServerConfig, ShowData, DEFAULT_PORT};
+use crate::{App, Server, ServerConfig, ShowData, UiAssets, DEFAULT_PORT};
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -182,7 +182,11 @@ impl Persist {
 }
 
 /// Desktop-App: alles im Datenordner, Server auf Port 8750 im ganzen Netz.
-pub async fn start_desktop(data_dir: &Path) -> Result<(Arc<App>, Server, Arc<Persist>)> {
+/// `ui` sind die eingebauten Dateien der App, damit Handys `/monitor` laden können.
+pub async fn start_desktop(
+    data_dir: &Path,
+    ui: Option<UiAssets>,
+) -> Result<(Arc<App>, Server, Arc<Persist>)> {
     let settings_path = data_dir.join("settings.json");
     let show_path = data_dir.join("show.json");
     let start = load_start(data_dir);
@@ -197,6 +201,7 @@ pub async fn start_desktop(data_dir: &Path) -> Result<(Arc<App>, Server, Arc<Per
         ServerConfig {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
             ui_dir: None,
+            ui_assets: ui.clone(),
         },
     )
     .await
@@ -209,6 +214,7 @@ pub async fn start_desktop(data_dir: &Path) -> Result<(Arc<App>, Server, Arc<Per
                 ServerConfig {
                     bind: SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)),
                     ui_dir: None,
+                    ui_assets: ui,
                 },
             )
             .await?

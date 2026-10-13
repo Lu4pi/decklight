@@ -76,6 +76,7 @@ async fn websocket_state_commands_and_restart() {
         ServerConfig {
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             ui_dir: None,
+            ui_assets: None,
         },
     )
     .await
@@ -226,6 +227,7 @@ async fn show_files_save_open_new_import_and_backups() {
         ServerConfig {
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             ui_dir: None,
+            ui_assets: None,
         },
     )
     .await

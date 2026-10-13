@@ -53,6 +53,8 @@ export interface DeckView {
   master: boolean;
   info: TrackSummary | null;
   timecode_ms: number | null;
+  /** Track-Timecode als HH:MM:SS:FF, nur mit Offset. */
+  timecode: string | null;
 }
 
 export interface StateView {
@@ -61,7 +63,14 @@ export interface StateView {
   master_mode: MasterMode;
   armed: boolean;
   decks: DeckView[];
-  timecode: { text: string | null; deck: number | null; running: boolean; errors: number; enabled: boolean };
+  timecode: {
+    text: string | null;
+    deck: number | null;
+    running: boolean;
+    errors: number;
+    enabled: boolean;
+    rate: FrameRate;
+  };
   mixer_bpm: number | null;
 }
 

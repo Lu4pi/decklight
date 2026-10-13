@@ -8,6 +8,7 @@
   import Waveform from "../components/Waveform.svelte";
   import CueEditor from "../components/CueEditor.svelte";
   import ActionsEditor from "../components/ActionsEditor.svelte";
+  import CueHead from "../components/CueHead.svelte";
 
   const tracks = $derived<TrackSummary[]>(conn.show?.tracks ?? []);
   const liveDeck = (key: string) => conn.state?.decks.find((d) => d.info?.key === key);
@@ -146,6 +147,8 @@
     return f.type === "any" ? "jedes Deck" : f.type === "master" ? "Master-Deck" : `Deck ${f.deck}`;
   }
 </script>
+
+<CueHead />
 
 <div class="layout">
   <aside>

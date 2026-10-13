@@ -5,6 +5,7 @@
 //! spricht über http://127.0.0.1:8750 mit dem Kern, genau wie /monitor im Netz.
 
 use decklight_server::files::{start_desktop, Persist};
+use decklight_server::UiAssets;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tauri::webview::DownloadEvent;
@@ -39,8 +40,16 @@ fn main() {
                     .build()?;
             }
             let dir = app.path().app_data_dir()?;
+            // Die eingebaute Oberfläche auch übers Netz ausliefern: so öffnen
+            // Handy und Tablet http://<Rechner>:8750/monitor ohne Extra-Installation.
+            let resolver = app.asset_resolver();
+            let ui = UiAssets(Arc::new(move |path: &str| {
+                resolver
+                    .get(path.to_string())
+                    .map(|a| (a.bytes, a.mime_type))
+            }));
             tauri::async_runtime::spawn(async move {
-                match start_desktop(&dir).await {
+                match start_desktop(&dir, Some(ui)).await {
                     Ok((app, server, persist)) => {
                         tracing::info!(addr = %server.addr, dir = %dir.display(), "DeckLight-Kern läuft");
                         let _ = PERSIST.set(persist);

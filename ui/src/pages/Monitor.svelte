@@ -1,32 +1,28 @@
 <script lang="ts">
-  // /monitor: Vollbild fürs Tablet oder Handy, nur lesend.
+  // /monitor: Handy- und Tablet-Ansicht. Eine Karte je Player mit großem Timecode.
   import { conn } from "../lib/conn.svelte";
-  import { clock, stateLabel } from "../lib/format";
-  import { artworkUrl, loadTrack, type LoadedTrack } from "../lib/tracks";
+  import { deckTimecode, stateIcon, titleLine, tone } from "../lib/deck";
+  import { live } from "../lib/live.svelte";
   import Waveform from "../components/Waveform.svelte";
   import PinPrompt from "../components/PinPrompt.svelte";
+  import Logo from "../components/Logo.svelte";
+  import SegText from "../components/SegText.svelte";
 
   const s = $derived(conn.state);
   const decks = $derived((s?.decks ?? []).filter((d) => d.number <= 6));
-  const colors = ["#2fa8ff", "#ff8a1f", "#b36bff", "#3ddc84", "#ff4fa3", "#f5d90a"];
+  $effect(() => live.ensure(decks));
 
-  let tracks = $state<Record<string, LoadedTrack | null>>({});
-  $effect(() => {
-    for (const d of decks) {
-      const k = d.info?.loaded ? d.info.key : null;
-      if (k && !(k in tracks)) {
-        tracks[k] = null;
-        loadTrack(k).then((t) => (tracks[k] = t));
-      }
-    }
-  });
-
-  // Bildschirm anlassen, solange die Seite offen ist.
+  // Bildschirm anlassen, solange die Seite offen ist (geht nur, wo der Browser es erlaubt).
   $effect(() => {
     let lock: { release(): Promise<void> } | null = null;
     const nav = navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<{ release(): Promise<void> }> } };
-    nav.wakeLock?.request("screen").then((l) => (lock = l)).catch(() => {});
+    const request = () => {
+      if (document.visibilityState === "visible") nav.wakeLock?.request("screen").then((l) => (lock = l)).catch(() => {});
+    };
+    request();
+    document.addEventListener("visibilitychange", request);
     return () => {
+      document.removeEventListener("visibilitychange", request);
       lock?.release();
     };
   });
@@ -37,43 +33,38 @@
 {:else}
   <div class="monitor">
     <header>
-      <span class="brand">DeckLight</span>
-      <span class="tc" class:run={s?.timecode.running}>{s?.timecode.text ?? "--:--:--:--"}</span>
-      <span class="info">
-        {s?.master ? `Master: Deck ${s.master}` : "kein Master"}
-        {#if s && !s.armed}<b class="off">TRIGGER GESPERRT</b>{/if}
+      <Logo size={22} />
+      <div class="status">
+        <span class="mtc" class:run={s?.timecode.running}>TC {s?.timecode.enabled ? (s.timecode.text ?? "--:--:--:--") : "aus"}</span>
+        <span>{s?.master ? `Master ${s.master}` : "kein Master"}</span>
+        {#if s && !s.armed}<b class="off">Trigger gesperrt</b>{/if}
         {#if !conn.connected}<b class="off">keine Verbindung</b>{/if}
-      </span>
+      </div>
     </header>
-    <div class="decks" style:--n={Math.min(decks.length, 2) || 1}>
+
+    {#if decks.length === 0}
+      <p class="empty">{conn.connected ? "Keine Player im Netz." : "Verbinde mit DeckLight …"}</p>
+    {/if}
+
+    <div class="cards">
       {#each decks as d (d.number)}
-        {@const c = colors[(d.number - 1) % 6]}
-        {@const len = d.track_length_ms ?? (d.info ? d.info.duration_s * 1000 : null)}
-        <div class="deck" class:master={d.master} style:--c={c}>
-          <div class="top">
-            <span class="num">{d.number}</span>
-            {#if d.info?.has_artwork}<img src={artworkUrl(d.info.key)} alt="" />{/if}
-            <div class="text">
-              <div class="title">{d.info?.title ?? "—"}</div>
-              <div class="artist">{d.info?.artist ?? ""}</div>
+        <div class="card" class:master={d.master}>
+          <div class="titlebar">♪ {titleLine(d)}</div>
+          <div class="mid">
+            <div class="pl">
+              <div class="box" class:red={d.master}><span>Player</span><b>{d.number}</b></div>
+              <span class="tag" class:on={d.on_air}>{d.on_air ? "On Air" : ""}</span>
             </div>
-            <div class="right">
-              <div class="bpm">{d.effective_bpm?.toFixed(1) ?? "--"}</div>
-              <div class="state">
-                {stateLabel(d.play_state)}{#if d.on_air} · <b class="air">ON AIR</b>{/if}
+            <div class="tcol">
+              <div class="beats" aria-label="Beat {d.beat_in_bar}">
+                {#each [1, 2, 3, 4] as b}<i class:on={d.beat_in_bar === b && d.position_ms != null}></i>{/each}
               </div>
+              <div class="tc {tone(d)}"><SegText text={deckTimecode(d) ?? "--:--:--:--"} /></div>
             </div>
+            <div class="ico">{stateIcon(d)}</div>
           </div>
-          <Waveform
-            track={d.info ? (tracks[d.info.key] ?? null) : null}
-            position={() => conn.positionOf(d.number)}
-            mode="overview"
-            color={c}
-            height={70}
-          />
-          <div class="times">
-            <span>{clock(d.position_ms, false)}</span>
-            <span class="rem">-{clock(len != null && d.position_ms != null ? len - d.position_ms : null, false)}</span>
+          <div class="wave">
+            <Waveform track={live.of(d)} position={() => conn.positionOf(d.number)} mode="overview" height={40} />
           </div>
         </div>
       {/each}
@@ -84,119 +75,169 @@
 <style>
   .monitor {
     min-height: 100vh;
+    min-height: 100dvh;
+    background: #000;
     display: flex;
     flex-direction: column;
-    padding: 12px;
-    gap: 12px;
+    gap: 8px;
+    padding: max(10px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
   }
   header {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 18px;
-    flex-wrap: wrap;
+    gap: 4px;
   }
-  .brand {
-    font-weight: 800;
-    color: var(--accent);
-  }
-  .tc {
-    font-family: var(--mono);
-    font-size: clamp(28px, 6vw, 64px);
-    font-weight: 700;
-    color: var(--text-dim);
-  }
-  .tc.run {
-    color: var(--accent);
-  }
-  .info {
-    color: var(--text-dim);
+  .status {
     display: flex;
-    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px 12px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .mtc {
+    font-family: var(--mono);
+  }
+  .mtc.run {
+    color: var(--tc-run);
   }
   .off {
     color: var(--danger);
   }
-  .decks {
-    flex: 1;
+  .empty {
+    text-align: center;
+    color: var(--text-dim);
+  }
+  .cards {
     display: grid;
-    grid-template-columns: repeat(var(--n), minmax(0, 1fr));
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
     align-content: start;
   }
-  @media (max-width: 800px) {
-    .decks {
-      grid-template-columns: minmax(0, 1fr);
+  @media (min-width: 760px) {
+    .cards {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
-  .deck {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-left: 6px solid var(--c);
-    border-radius: 10px;
-    padding: 12px;
+  .card {
+    border: 2px solid #1c1c26;
+    background: #030306;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
   }
-  .deck.master {
-    box-shadow: 0 0 0 2px var(--c);
+  .card.master {
+    border-color: #3a1013;
   }
-  .top {
-    display: flex;
-    gap: 12px;
+  .titlebar {
+    font-size: clamp(13px, 3.6vw, 17px);
+    padding: 4px 8px;
+  }
+  .mid {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: clamp(6px, 2.5vw, 14px);
     align-items: center;
-    min-width: 0;
+    padding: 6px 8px 2px;
   }
-  .num {
-    font-size: 40px;
-    font-weight: 800;
-    color: var(--c);
-    width: 36px;
-  }
-  img {
-    width: 72px;
-    height: 72px;
-    border-radius: 6px;
-    object-fit: cover;
-  }
-  .text {
-    flex: 1;
-    min-width: 0;
-  }
-  .title {
-    font-size: clamp(18px, 2.6vw, 30px);
-    font-weight: 700;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .artist {
-    color: var(--text-dim);
-    font-size: clamp(14px, 1.8vw, 20px);
-  }
-  .right {
-    text-align: right;
-  }
-  .bpm {
-    font-family: var(--mono);
-    font-size: clamp(22px, 3vw, 36px);
-    font-weight: 700;
-  }
-  .state {
-    color: var(--text-dim);
-    font-size: 13px;
-  }
-  .air {
-    color: var(--danger);
-  }
-  .times {
+  .pl {
     display: flex;
-    justify-content: space-between;
-    font-family: var(--mono);
-    font-size: clamp(18px, 2.4vw, 28px);
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
   }
-  .rem {
-    color: var(--text-dim);
+  .box {
+    border: 2px solid #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1;
+    padding: 3px 8px 4px;
+    min-width: clamp(48px, 13vw, 64px);
+  }
+  .box span {
+    font-size: clamp(9px, 2.4vw, 12px);
+    text-transform: uppercase;
+    color: #cfcfd8;
+  }
+  .box b {
+    font-size: clamp(28px, 8vw, 40px);
+    font-weight: 600;
+  }
+  .box.red {
+    background: var(--onair);
+    border-color: var(--onair);
+  }
+  .box.red span {
+    color: #fff;
+  }
+  .tag {
+    width: 100%;
+    height: 9px;
+    background: #24242c;
+    font-size: 7px;
+    font-weight: 800;
+    color: #000;
+    text-transform: uppercase;
+    text-align: center;
+    line-height: 9px;
+  }
+  .tag.on {
+    background: var(--tag);
+  }
+  .tcol {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .beats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 3px;
+    width: 72%;
+    align-self: flex-end;
+  }
+  .beats i {
+    height: clamp(8px, 2.4vw, 12px);
+    background: #1d2160;
+    border: 1px solid #333a90;
+  }
+  .beats i.on {
+    background: var(--beat);
+    border-color: var(--beat);
+  }
+  .tc {
+    font-family: var(--seg);
+    font-size: clamp(22px, 8.2vw, 46px);
+    line-height: 1.05;
+    white-space: nowrap;
+    color: var(--tc-stop);
+  }
+  @media (min-width: 760px) {
+    .tc {
+      font-size: clamp(22px, 3.9vw, 46px);
+    }
+  }
+  .tc.run {
+    color: var(--tc-run);
+  }
+  .tc.loop {
+    color: var(--tc-loop);
+  }
+  .tc.off {
+    color: var(--tc-off);
+  }
+  .ico {
+    font-size: clamp(18px, 5vw, 26px);
+    width: 1.4em;
+    text-align: center;
+  }
+  .wave {
+    margin: 4px 6px 6px;
+    background: #050507;
+    border-bottom: 2px solid #2a2a36;
   }
 </style>
