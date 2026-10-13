@@ -204,7 +204,7 @@ export interface Settings {
     artnet_port: number;
     mtc_port: string | null;
   };
-  actions: { osc: string | null; osc_prefix: string; midi_port: string | null; bpm_command: string | null };
+  actions: { osc: string | null; osc_prefix: string; midi_port: string | null; bpm_command: string | null; phase_command: string | null };
   web: { pin: string | null; allow_lan_control: boolean };
 }
 

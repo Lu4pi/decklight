@@ -1,5 +1,5 @@
 //! Tempo des spielenden Decks geht als MA3-Befehl per OSC ans Pult, auch ohne
-//! Mixer und ohne Sync-Master (ein einzelner CDJ).
+//! Mixer und ohne Sync-Master (ein einzelner CDJ). Phasen-Sync auf jeder „1“.
 
 use decklight_core::{ActionOutConfig, Core, CoreConfig};
 use decklight_outputs::osc::{self, OscArg};
@@ -67,20 +67,34 @@ async fn master_bpm_reaches_the_desk() {
     let got = tokio::task::spawn_blocking(move || {
         let end = Instant::now() + Duration::from_secs(5);
         let mut buf = [0u8; 256];
+        let mut out = Vec::new();
         while Instant::now() < end {
             if let Ok(n) = desk.recv(&mut buf) {
                 let (addr, args) = osc::decode(&buf[..n]).unwrap();
                 if let (true, Some(OscArg::String(cmd))) = (addr == "/gma3/cmd", args.first()) {
-                    if cmd.starts_with("Master 3.1 At") {
-                        return Some(cmd.clone());
-                    }
+                    out.push(cmd.clone());
                 }
             }
         }
-        None
+        out
     })
     .await
     .unwrap();
     sim.abort();
-    assert_eq!(got.as_deref(), Some("Master 3.1 At 128.0"));
+    assert_eq!(got.first().map(String::as_str), Some("Master 3.1 At 128.0"));
+    // 128 BPM: eine „1“ alle 1,875 s, also in 5 s zwei bis drei Syncs, jeweils
+    // gefolgt vom Tempo.
+    let learns: Vec<usize> = got
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| *c == "Learn Master 3.1")
+        .map(|(i, _)| i)
+        .collect();
+    assert!((2..=3).contains(&learns.len()), "{got:?}");
+    for i in learns {
+        assert_eq!(
+            got.get(i + 1).map(String::as_str),
+            Some("Master 3.1 At 128.0")
+        );
+    }
 }

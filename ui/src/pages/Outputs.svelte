@@ -126,6 +126,10 @@
         <input placeholder="Master 3.1 At {'{bpm}'}" value={draft.actions.bpm_command ?? ""} disabled={conn.readonly}
           onchange={(e) => draft && (draft.actions.bpm_command = nullable((e.target as HTMLInputElement).value))} />
       </label>
+      <label>Phasen-Sync (auf jeder „1“, bei Tempowechsel auf jedem Beat; leer = aus)
+        <input placeholder="Learn Master 3.1" value={draft.actions.phase_command ?? ""} disabled={conn.readonly}
+          onchange={(e) => draft && (draft.actions.phase_command = nullable((e.target as HTMLInputElement).value))} />
+      </label>
       <div class="hint">
         Geht bei jeder Tempoänderung per OSC raus, <code>{'{bpm}'}</code> wird ersetzt. <code>Master 3.1</code> ist
         Speed-Master 1; in der MA3 Effekte/Phaser diesem Speed-Master zuweisen.

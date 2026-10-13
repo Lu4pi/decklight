@@ -31,6 +31,11 @@ pub struct ActionOutConfig {
     /// Leer = aus. Läuft auch bei Not-Aus weiter, wie der Timecode.
     #[serde(default = "default_bpm_command")]
     pub bpm_command: Option<String>,
+    /// MA3-Befehl für den Phasen-Sync, genau auf dem Beat gesendet: auf jeder
+    /// „1“ (alle 4 Beats), während einer Tempoänderung auf jedem Beat. Danach
+    /// geht sofort der Tempo-Befehl hinterher. Leer = aus.
+    #[serde(default = "default_phase_command")]
+    pub phase_command: Option<String>,
 }
 
 /// Speed-Master 1 der grandMA3 folgt dem Tempo des Master-Decks.
@@ -40,6 +45,16 @@ fn default_bpm_command() -> Option<String> {
     Some(DEFAULT_BPM_COMMAND.into())
 }
 
+/// „Learn“ auf dem Beat richtet die Phase von Speed-Master 1 aus.
+pub const DEFAULT_PHASE_COMMAND: &str = "Learn Master 3.1";
+
+fn default_phase_command() -> Option<String> {
+    Some(DEFAULT_PHASE_COMMAND.into())
+}
+
+/// So lange nach der letzten Tempoänderung auf jedem Beat synchronisieren.
+const TEMPO_CHANGE_WINDOW: Duration = Duration::from_secs(3);
+
 impl Default for ActionOutConfig {
     fn default() -> Self {
         Self {
@@ -47,6 +62,7 @@ impl Default for ActionOutConfig {
             osc_prefix: String::new(),
             midi_port: None,
             bpm_command: default_bpm_command(),
+            phase_command: default_phase_command(),
         }
     }
 }
@@ -176,6 +192,8 @@ fn run(
     let mut next = Instant::now();
     let bpm_template = cfg.bpm_command.clone().filter(|c| !c.trim().is_empty());
     let mut bpm_sent: Option<(f64, Instant)> = None;
+    let phase_template = cfg.phase_command.clone().filter(|c| !c.trim().is_empty());
+    let mut tempo_changed: Option<Instant> = None;
 
     while !stop.load(Ordering::Relaxed) {
         next += tick;
@@ -232,19 +250,42 @@ fn run(
                 })
                 .collect();
             firings.extend(engine.update(t, &inputs, master, &s.triggers));
+            // Tempoquelle: Master-Deck, sonst (ein CDJ ohne Sync-Master) das
+            // spielende Deck.
+            let source = master
+                .and_then(|m| s.engine.deck(m))
+                .or_else(|| s.engine.decks().find(|d| d.moving));
+            let source_number = source.map(|d| d.number);
+            let bpm = source
+                .and_then(|d| d.effective_bpm())
+                .map(|b| (b * 10.0).round() / 10.0);
+            // Phasen-Sync genau auf dem Beat des Quell-Decks.
+            if let (Some(phase), Some(osc)) = (&phase_template, dispatcher.osc.as_ref()) {
+                let changing = tempo_changed.is_some_and(|at| at.elapsed() < TEMPO_CHANGE_WINDOW);
+                let on_beat = deck_events.iter().any(|e| {
+                    matches!(e, EngineEvent::Beat { deck, beat_in_bar, .. }
+                        if Some(*deck) == source_number && (*beat_in_bar == 1 || changing))
+                });
+                if on_beat {
+                    if let Err(e) = osc.command(phase) {
+                        tracing::debug!(error = %e, "Phasen-Sync nicht gesendet");
+                    }
+                    if let (Some(template), Some(b)) = (&bpm_template, bpm) {
+                        let _ = osc.command(&bpm_command(template, b));
+                        bpm_sent = Some((b, Instant::now()));
+                    }
+                }
+            }
             if let Some(template) = &bpm_template {
-                // Master-Deck, sonst (ein CDJ ohne Sync-Master) das spielende Deck.
-                let bpm = master
-                    .and_then(|m| s.engine.deck(m))
-                    .or_else(|| s.engine.decks().find(|d| d.moving))
-                    .and_then(|d| d.effective_bpm())
-                    .map(|b| (b * 10.0).round() / 10.0);
                 let due = bpm_sent.is_none_or(|(last, at)| {
                     bpm.is_some_and(|b| (b - last).abs() >= 0.05) && at.elapsed() >= BPM_INTERVAL
                 });
                 if let (Some(b), true, Some(osc)) = (bpm, due, dispatcher.osc.as_ref()) {
                     if let Err(e) = osc.command(&bpm_command(template, b)) {
                         tracing::debug!(error = %e, "Tempo nicht gesendet");
+                    }
+                    if bpm_sent.is_some() {
+                        tempo_changed = Some(Instant::now());
                     }
                     bpm_sent = Some((b, Instant::now()));
                 }
