@@ -8,6 +8,7 @@
 
 pub mod command;
 pub mod files;
+pub mod firewall;
 pub mod library;
 pub mod settings;
 pub mod view;
@@ -38,6 +39,9 @@ pub use settings::{NetworkSettings, WebSettings};
 
 pub const DEFAULT_PORT: u16 = 8750;
 
+/// Name der Logdatei im Datenordner der Desktop-App.
+pub const LOG_FILE: &str = "decklight.log";
+
 /// Show-Daten, die einen Neustart des Kerns überleben.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ShowData {
@@ -56,6 +60,8 @@ pub struct App {
     restart: tokio::sync::Mutex<()>,
     library: Mutex<Option<Arc<library::Library>>>,
     show_name: Mutex<String>,
+    firewall: Mutex<Option<bool>>,
+    log_path: Mutex<Option<PathBuf>>,
 }
 
 impl App {
@@ -88,9 +94,39 @@ impl App {
             restart: tokio::sync::Mutex::new(()),
             library: Mutex::new(None),
             show_name: Mutex::new("Neue Show".into()),
+            firewall: Mutex::new(None),
+            log_path: Mutex::new(None),
         });
         app.forward_events();
+        app.clone().check_firewall(true);
         Ok(app)
+    }
+
+    /// Windows-Firewall-Regel vorhanden? Außerhalb von Windows `None`.
+    pub fn firewall_ok(&self) -> Option<bool> {
+        *self.firewall.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Prüft die Firewall im Hintergrund; `warn` meldet eine fehlende Regel.
+    fn check_firewall(self: Arc<Self>, warn: bool) {
+        tokio::task::spawn_blocking(move || {
+            let ok = firewall::check();
+            *self.firewall.lock().unwrap_or_else(|e| e.into_inner()) = ok;
+            if warn && ok == Some(false) {
+                self.warn(
+                    decklight_core::Level::Warning,
+                    "Windows-Firewall: DeckLight ist für CDJ-Netze (Windows stuft sie als öffentlich ein) \
+                     noch nicht freigegeben. Unter Monitoring „Firewall freigeben“ wählen.",
+                );
+            }
+        });
+    }
+
+    /// Firewall-Regel anlegen (UAC-Abfrage), danach neu prüfen.
+    pub async fn fix_firewall(self: &Arc<Self>) -> Result<()> {
+        tokio::task::spawn_blocking(firewall::install).await??;
+        self.clone().check_firewall(false);
+        Ok(())
     }
 
     pub fn core(&self) -> Arc<Core> {
@@ -133,6 +169,11 @@ impl App {
         if let Ok(mut l) = self.library.lock() {
             *l = Some(Arc::new(library::Library::new(dir)));
         }
+    }
+
+    /// Logdatei für `/api/log.txt`.
+    pub fn set_log_path(&self, path: impl Into<PathBuf>) {
+        *self.log_path.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.into());
     }
 
     pub fn library(&self) -> Option<Arc<library::Library>> {
@@ -443,6 +484,7 @@ fn api_router(app: Arc<App>) -> Router {
         .route("/api/shows", get(api_shows))
         .route("/api/shows/export", get(api_show_export))
         .route("/api/access", get(api_access))
+        .route("/api/log.txt", get(api_log))
         .with_state(app)
         .layer(desktop_cors())
 }
@@ -603,7 +645,8 @@ async fn client(mut socket: WebSocket, app: Arc<App>, readonly: bool) {
             }
             _ = slow.tick() => {
                 let core = app.core();
-                let mut out = core.with(|s| tagged("monitor", view::monitor(s)));
+                let link = view::LinkView::of(core.link(), app.firewall_ok());
+                let mut out = core.with(|s| tagged("monitor", view::monitor(s, link)));
                 let name = app.show_name();
                 let show = core
                     .with(|s| tagged("show", NamedShow { name: &name, show: view::show(s) }))
@@ -681,7 +724,9 @@ async fn api_monitor(
     headers: HeaderMap,
 ) -> Response {
     guarded!(app, peer, q, headers, false);
-    Json(app.core().with(|s| view::monitor(s))).into_response()
+    let core = app.core();
+    let link = view::LinkView::of(core.link(), app.firewall_ok());
+    Json(core.with(|s| view::monitor(s, link))).into_response()
 }
 
 async fn api_track(
@@ -744,6 +789,13 @@ async fn api_command(
     guarded!(app, peer, q, headers, true);
     let reply = match cmd {
         Command::UpdateSettings { settings } => match app.update_settings(*settings).await {
+            Ok(()) => Reply::ok(),
+            Err(e) => Reply::err(format!("{e:#}")),
+        },
+        Command::FixFirewall if !peer.ip().is_loopback() => {
+            Reply::err("Firewall-Freigabe nur am DeckLight-Rechner")
+        }
+        Command::FixFirewall => match app.fix_firewall().await {
             Ok(()) => Reply::ok(),
             Err(e) => Reply::err(format!("{e:#}")),
         },
@@ -861,6 +913,45 @@ async fn api_settings(
 ) -> Response {
     guarded!(app, peer, q, headers, true);
     Json(app.settings()).into_response()
+}
+
+/// Ende der Logdatei (höchstens 2 MB) zum Herunterladen.
+async fn api_log(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): Peer,
+    Query(q): Query<PinQuery>,
+    headers: HeaderMap,
+) -> Response {
+    guarded!(app, peer, q, headers, true);
+    let path = app
+        .log_path
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let Some(path) = path else {
+        return (
+            StatusCode::NOT_FOUND,
+            "Keine Logdatei (nur in der Desktop-App)",
+        )
+            .into_response();
+    };
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let start = bytes.len().saturating_sub(2_000_000);
+            (
+                [
+                    (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"decklight-log.txt\"",
+                    ),
+                ],
+                bytes[start..].to_vec(),
+            )
+                .into_response()
+        }
+        Err(e) => (StatusCode::NOT_FOUND, format!("Logdatei: {e}")).into_response(),
+    }
 }
 
 /// Wie Handy und Tablet den DeckLight-Rechner erreichen.

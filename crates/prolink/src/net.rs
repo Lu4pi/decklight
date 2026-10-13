@@ -8,7 +8,7 @@ use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -161,6 +161,10 @@ pub struct LinkConfig {
     /// Ohne virtuellen Player kommen nur Broadcasts an (Keep-Alive, Beats).
     /// CDJ-Status schicken die Player gezielt an angemeldete Geräte.
     pub virtual_player: Option<VirtualPlayer>,
+    /// Der virtuelle Player zieht auf die Schnittstelle um, in deren Netz die
+    /// Player stehen (wenn keine Schnittstelle fest eingestellt ist). Sonst
+    /// meldet er sich z. B. im WLAN an und die CDJs schicken ihm keinen Status.
+    pub follow_devices: bool,
 }
 
 impl Default for LinkConfig {
@@ -170,6 +174,7 @@ impl Default for LinkConfig {
             ports: PortConfig::STANDARD,
             device_timeout: DEFAULT_DEVICE_TIMEOUT,
             virtual_player: None,
+            follow_devices: false,
         }
     }
 }
@@ -186,6 +191,11 @@ pub enum LinkEvent {
         /// Auf diese freie Nummer ist DeckLight ausgewichen.
         switched_to: Option<u8>,
     },
+    /// Ein Gerät steht in keinem Netz, das dieser Rechner hat: DeckLight kann
+    /// sich dort nicht anmelden und bekommt keinen Player-Status.
+    NoInterface {
+        device: Device,
+    },
     Packet {
         from: SocketAddr,
         #[serde(skip)]
@@ -201,6 +211,8 @@ pub struct Link {
     tasks: Vec<JoinHandle<()>>,
     local_ports: PortConfig,
     own_number: Arc<AtomicU8>,
+    own_ip: Arc<AtomicU32>,
+    counts: Arc<[AtomicU64; 3]>,
 }
 
 impl Link {
@@ -224,9 +236,16 @@ impl Link {
         let ctx = Ctx {
             events: events.clone(),
             devices: devices.clone(),
-            own_ip: config.virtual_player.as_ref().map(|v| v.ip),
+            own_ip: Arc::new(AtomicU32::new(
+                config
+                    .virtual_player
+                    .as_ref()
+                    .map_or(0, |v| u32::from(v.ip)),
+            )),
             own_number: own_number.clone(),
+            counts: Arc::new(Default::default()),
         };
+        let counts = ctx.counts.clone();
         tasks.push(tokio::spawn(receive(
             ctx.clone(),
             announce.clone(),
@@ -242,6 +261,7 @@ impl Link {
             Arc::new(status),
             Channel::Status,
         )));
+        let own_ip = ctx.own_ip.clone();
         tasks.push(tokio::spawn(expire(ctx, config.device_timeout)));
 
         if let Some(vp) = config.virtual_player.clone() {
@@ -258,6 +278,8 @@ impl Link {
                 target,
                 devices.clone(),
                 own_number.clone(),
+                config.follow_devices.then(|| own_ip.clone()),
+                events.clone(),
             )));
         }
 
@@ -267,6 +289,8 @@ impl Link {
             tasks,
             local_ports,
             own_number,
+            own_ip,
+            counts,
         })
     }
 
@@ -288,6 +312,19 @@ impl Link {
         }
     }
 
+    /// IP, mit der sich DeckLight bei den Playern anmeldet; ohne virtuellen Player `None`.
+    pub fn own_ip(&self) -> Option<Ipv4Addr> {
+        match self.own_ip.load(Ordering::Relaxed) {
+            0 => None,
+            ip => Some(Ipv4Addr::from(ip)),
+        }
+    }
+
+    /// Empfangene Pakete je Port seit dem Start: Ankündigung, Beat, Status.
+    pub fn packet_counts(&self) -> [u64; 3] {
+        [0, 1, 2].map(|i| self.counts[i].load(Ordering::Relaxed))
+    }
+
     pub fn local_ports(&self) -> PortConfig {
         self.local_ports
     }
@@ -307,8 +344,10 @@ impl Drop for Link {
 struct Ctx {
     events: broadcast::Sender<LinkEvent>,
     devices: Arc<Mutex<DeviceTable>>,
-    own_ip: Option<Ipv4Addr>,
+    /// Eigene IP des virtuellen Players, 0 ohne.
+    own_ip: Arc<AtomicU32>,
     own_number: Arc<AtomicU8>,
+    counts: Arc<[AtomicU64; 3]>,
 }
 
 fn bind_udp(ip: Ipv4Addr, port: u16) -> io::Result<UdpSocket> {
@@ -333,12 +372,20 @@ async fn receive(ctx: Ctx, socket: Arc<UdpSocket>, channel: Channel) {
                 continue;
             }
         };
+        let slot = match channel {
+            Channel::Announce => 0,
+            Channel::Beat => 1,
+            Channel::Status => 2,
+        };
+        ctx.counts[slot].fetch_add(1, Ordering::Relaxed);
         let Some(packet) = packet::parse(channel, &buf[..len]) else {
             continue;
         };
         let at = Instant::now();
         if let Packet::KeepAlive(ka) = &packet {
-            if ctx.own_ip == Some(ka.ip) && ctx.own_number.load(Ordering::Relaxed) == ka.number {
+            if ctx.own_ip.load(Ordering::Relaxed) == u32::from(ka.ip)
+                && ctx.own_number.load(Ordering::Relaxed) == ka.number
+            {
                 continue; // unser eigenes Echo
             }
             note_keep_alive(&ctx, ka, at);
@@ -361,7 +408,7 @@ fn note_keep_alive(ctx: &Ctx, ka: &KeepAlive, at: Instant) {
         }
     };
     let own = ctx.own_number.load(Ordering::Relaxed);
-    if ctx.own_ip.is_some() && own == device.number {
+    if ctx.own_ip.load(Ordering::Relaxed) != 0 && own == device.number {
         // Das andere Gerät war zuerst da oder ist ein echter Player: ausweichen.
         let taken: Vec<u8> = ctx
             .devices
@@ -398,6 +445,19 @@ async fn expire(ctx: Ctx, timeout: Duration) {
     }
 }
 
+/// Schnittstelle, in deren Teilnetz `ip` liegt.
+pub fn interface_for(ip: Ipv4Addr) -> Option<Interface> {
+    interfaces()
+        .ok()?
+        .into_iter()
+        .find(|i| !i.loopback && same_subnet(i.ip, ip, i.netmask))
+}
+
+fn same_subnet(a: Ipv4Addr, b: Ipv4Addr, mask: Ipv4Addr) -> bool {
+    let m = u32::from(mask);
+    u32::from(a) & m == u32::from(b) & m
+}
+
 /// Erst zuhören, welche Nummern belegt sind, dann eine freie nehmen.
 pub const LISTEN_BEFORE_ANNOUNCE: Duration = Duration::from_millis(1800);
 
@@ -418,7 +478,11 @@ async fn announce_loop(
     target: SocketAddrV4,
     devices: Arc<Mutex<DeviceTable>>,
     own_number: Arc<AtomicU8>,
+    follow: Option<Arc<AtomicU32>>,
+    events: broadcast::Sender<LinkEvent>,
 ) {
+    let mut target = target;
+    let mut checked: Vec<Ipv4Addr> = Vec::new();
     tokio::time::sleep(LISTEN_BEFORE_ANNOUNCE).await;
     let wanted = own_number.load(Ordering::Relaxed);
     let taken: Vec<u8> = devices
@@ -438,6 +502,46 @@ async fn announce_loop(
     let mut tick = tokio::time::interval(KEEP_ALIVE_INTERVAL);
     loop {
         tick.tick().await;
+        if let Some(own_ip) = &follow {
+            // Neue Geräte-IPs einmal prüfen: liegt der Player in einem anderen
+            // Netz als wir, auf dessen Schnittstelle umziehen.
+            let fresh: Vec<Device> = devices
+                .lock()
+                .map(|t| t.list())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|d| !checked.contains(&d.ip))
+                .collect();
+            for device in fresh {
+                let ip = device.ip;
+                checked.push(ip);
+                if ip.is_loopback() {
+                    continue; // Simulator auf diesem Rechner
+                }
+                let Some(iface) = interface_for(ip) else {
+                    tracing::warn!(device = %device.name, %ip, "Kein Netzwerkanschluss im Netz dieses Geräts");
+                    let _ = events.send(LinkEvent::NoInterface { device });
+                    continue;
+                };
+                if iface.ip != vp.ip {
+                    tracing::info!(
+                        from = %vp.ip,
+                        to = %iface.ip,
+                        iface = %iface.name,
+                        player = %ip,
+                        "Virtueller Player zieht ins Netz der Player um"
+                    );
+                    vp.ip = iface.ip;
+                    vp.broadcast = iface.broadcast;
+                    if let Some(mac) = iface.mac {
+                        vp.mac = mac;
+                    }
+                    own_ip.store(u32::from(iface.ip), Ordering::Relaxed);
+                    target = SocketAddrV4::new(iface.broadcast, target.port());
+                }
+                break;
+            }
+        }
         vp.number = own_number.load(Ordering::Relaxed);
         let peers = devices.lock().map(|t| t.len()).unwrap_or(0);
         let bytes = encode::keep_alive(&vp.keep_alive(u8::try_from(peers + 1).unwrap_or(u8::MAX)));
@@ -450,6 +554,22 @@ async fn announce_loop(
 #[cfg(test)]
 mod number_tests {
     use super::free_number;
+
+    #[test]
+    fn subnet_match() {
+        use super::same_subnet;
+        let m16 = "255.255.0.0".parse().unwrap();
+        assert!(same_subnet(
+            "169.254.3.4".parse().unwrap(),
+            "169.254.200.1".parse().unwrap(),
+            m16
+        ));
+        assert!(!same_subnet(
+            "192.168.1.2".parse().unwrap(),
+            "169.254.200.1".parse().unwrap(),
+            m16
+        ));
+    }
 
     #[test]
     fn picks_wanted_or_next_free_and_never_one_to_four() {

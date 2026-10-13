@@ -134,19 +134,44 @@ pub fn summary(key: &TrackKey, data: &TrackData, offset_ms: Option<f64>) -> Trac
 /// Seltener aktualisierte Daten fürs Monitoring (2×/s).
 #[derive(Debug, Clone, Serialize)]
 pub struct MonitorView {
+    pub link: LinkView,
     pub devices: Vec<DeviceInfo>,
     pub warnings: Vec<Warning>,
     pub history: Vec<HistoryEntry>,
     pub log: Vec<LogEntry>,
 }
 
+/// Wie DeckLight im PRO-DJ-LINK-Netz steht: für die Fehlersuche vor Ort.
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkView {
+    /// Eigene Player-Nummer und IP; ohne beides hört DeckLight nur zu.
+    pub number: Option<u8>,
+    pub ip: Option<String>,
+    /// Empfangene Pakete seit dem Start je Port (50000, 50001, 50002).
+    pub packets: [u64; 3],
+    /// Windows: Firewall-Regel für DeckLight vorhanden? Sonst `None`.
+    pub firewall_ok: Option<bool>,
+}
+
+impl LinkView {
+    pub fn of(link: &decklight_prolink::Link, firewall_ok: Option<bool>) -> Self {
+        Self {
+            number: link.own_number(),
+            ip: link.own_ip().map(|ip| ip.to_string()),
+            packets: link.packet_counts(),
+            firewall_ok,
+        }
+    }
+}
+
 const MONITOR_TAIL: usize = 200;
 
-pub fn monitor(s: &Shared) -> MonitorView {
+pub fn monitor(s: &Shared, link: LinkView) -> MonitorView {
     let tail = |n: usize| n.saturating_sub(MONITOR_TAIL);
     let warnings: Vec<Warning> = s.monitor.warnings().cloned().collect();
     let log: Vec<LogEntry> = s.trigger_log.entries().cloned().collect();
     MonitorView {
+        link,
         devices: s.engine.devices().cloned().collect(),
         warnings: warnings[tail(warnings.len())..].to_vec(),
         history: s.monitor.history.clone(),

@@ -142,3 +142,5 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Handy-Dialog mit QR-Code, PIN und Bedienrecht; `/api/access` (nur lokal)
 - [x] `/monitor` als Handy-Ansicht mit Player-Karten; Web-App-Manifest für den Home-Bildschirm
 - [ ] Am echten iPhone/Android im Club-WLAN testen (Lars)
+- [x] Echttest 13.10.: CDJ erkannt, aber keine Decks → virtueller Player folgt jetzt dem Netz der Player, Warnung ohne passende Netzwerkkarte, Paketzähler je Port, Windows-Firewall-Regel (Installer + Knopf unter Monitoring), Logdatei `decklight.log`
+- [ ] Erneuter Test am Laptop mit Ethernet-Link zum CDJ-Switch (Lars)

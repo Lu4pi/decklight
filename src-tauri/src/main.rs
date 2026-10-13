@@ -13,13 +13,41 @@ use tauri::{Manager, WebviewWindowBuilder};
 
 static PERSIST: OnceLock<Arc<Persist>> = OnceLock::new();
 
-fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+/// Log auf die Konsole und nach `decklight.log` im Datenordner, damit sich
+/// Probleme vor Ort hinterher nachvollziehen lassen (Monitoring → Log-Datei).
+fn init_logging(dir: &Path) {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    let filter =
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    let path = dir.join(decklight_server::LOG_FILE);
+    let file = std::fs::create_dir_all(dir).ok().and_then(|_| {
+        // Ab 5 MB neu anfangen, die alte Datei bleibt als .1 liegen.
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > 5_000_000) {
+            let _ = std::fs::rename(&path, path.with_extension("log.1"));
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()
+    });
+    let registry = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer());
+    match file {
+        Some(f) => registry
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(std::sync::Mutex::new(f)),
+            )
+            .init(),
+        None => registry.init(),
+    }
+}
 
+fn main() {
     tauri::Builder::default()
         // Nur eine DeckLight-Instanz: ein zweiter Start holt das offene Fenster
         // nach vorn, statt um Port 8750 und die PRO-DJ-LINK-Ports zu streiten.
@@ -40,6 +68,8 @@ fn main() {
                     .build()?;
             }
             let dir = app.path().app_data_dir()?;
+            init_logging(&dir);
+            tracing::info!(version = env!("CARGO_PKG_VERSION"), "DeckLight startet");
             // Die eingebaute Oberfläche auch übers Netz ausliefern: so öffnen
             // Handy und Tablet http://<Rechner>:8750/monitor ohne Extra-Installation.
             let resolver = app.asset_resolver();

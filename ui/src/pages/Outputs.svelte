@@ -144,6 +144,12 @@
           {#each interfaces as i}<option value={i.name}>{i.name} · {i.ip}</option>{/each}
         </select>
       </label>
+      <div class="hint">
+        Es erscheinen nur Netzwerkkarten mit IPv4-Adresse. Fehlt die Karte zum CDJ-Netz, hat sie keinen Link (Kabel,
+        Switch-LED, Adapter prüfen) oder keine Adresse: in Windows fest <code>169.254.10.10</code> /
+        <code>255.255.0.0</code> eintragen.
+        <button class="link" onclick={loadLists}>Liste aktualisieren</button>
+      </div>
       <div class="row">
         <label>Eigene Player-Nummer
           <select bind:value={draft.network.player} disabled={conn.readonly}>

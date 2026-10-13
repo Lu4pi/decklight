@@ -86,6 +86,7 @@ impl Settings {
         Ok(LinkConfig {
             ports: PortConfig::from_base(n.port_base),
             virtual_player,
+            follow_devices: n.iface.is_none(),
             ..Default::default()
         })
     }

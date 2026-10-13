@@ -193,6 +193,7 @@ pub async fn start_desktop(
     let app = App::start(start.settings, start.show).await?;
     app.set_show_name(&start.name);
     app.set_library(data_dir);
+    app.set_log_path(data_dir.join(crate::LOG_FILE));
     for w in start.warnings {
         app.warn(decklight_core::Level::Error, w);
     }

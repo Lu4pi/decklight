@@ -40,8 +40,16 @@
 <svelte:window bind:innerWidth={width} />
 
 {#if decks.length === 0}
+  {@const seen = conn.monitor?.devices.filter((d) => d.kind !== "rekordbox") ?? []}
   <div class="empty">
     <h2>Keine Player gefunden</h2>
+    {#if seen.length > 0}
+      <p class="warn">
+        Im Netz sind {seen.map((d) => `${d.name} (${d.ip})`).join(", ")}, aber kein Player schickt DeckLight seinen Status.
+        Unter <a href="#outputs">Netzwerk</a> die Netzwerkkarte zum CDJ-Netz wählen. Fehlt sie dort, hat sie keine
+        IP-Adresse: in Windows fest <code>169.254.10.10</code> / <code>255.255.0.0</code> eintragen.
+      </p>
+    {/if}
     <p>
       Prüfe unter <a href="#outputs">Netzwerk</a> die Schnittstelle. Zum Ausprobieren ohne Hardware:
       <code>decklight simulate</code>.
@@ -325,6 +333,11 @@
     color: var(--text-dim);
     padding: 40px;
     text-align: center;
+  }
+  .warn {
+    color: var(--tc-loop);
+    max-width: 720px;
+    margin: 0 auto 12px;
   }
   .empty a {
     color: #7aa2ff;

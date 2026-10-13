@@ -105,7 +105,17 @@ export interface LogEntry {
   error: string | null;
 }
 
+export interface LinkView {
+  number: number | null;
+  ip: string | null;
+  /** Empfangene Pakete je Port: 50000, 50001, 50002. */
+  packets: [number, number, number];
+  /** Windows: Firewall-Regel vorhanden; sonst null. */
+  firewall_ok: boolean | null;
+}
+
 export interface MonitorView {
+  link: LinkView;
   devices: DeviceInfo[];
   warnings: Warning[];
   history: HistoryEntry[];

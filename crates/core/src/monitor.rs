@@ -100,6 +100,14 @@ impl Monitor {
                 Level::Error,
                 format!("{name} benutzt dieselbe Player-Nummer {number} wie DeckLight, keine Nummer frei"),
             ),
+            EngineEvent::NoInterface { number, name, ip } => self.warn(
+                Level::Error,
+                format!(
+                    "{name} (#{number}, {ip}) ist in einem Netz, das dieser Rechner nicht hat. \
+                     Der Netzwerkkarte zum CDJ-Netz eine feste IP im selben Bereich geben \
+                     (z. B. 169.254.10.10 / 255.255.0.0), sonst kommen keine Deck-Daten an."
+                ),
+            ),
             EngineEvent::MasterChanged { to: None, .. } => {
                 self.warn(Level::Warning, "Kein Master-Deck: Timecode steht");
             }
