@@ -46,8 +46,14 @@ cargo run -p decklight -- simulate
 cargo run -p decklight -- serve --passive
 ```
 
-Eigene Abläufe für den Simulator: `decklight scenario > meine-show.json`, Datei
-anpassen, dann `decklight simulate --scenario meine-show.json`.
+Der Simulator kann mehr als die Demo:
+
+| Befehl | Was die virtuellen CDJs spielen |
+| --- | --- |
+| `decklight simulate --audio a.mp3 b.wav c.flac` | Audiodateien als DJ-Set; Tempo, Beatgrid und Wellenform aus der Analyse |
+| `decklight simulate --usb /Volumes/STICK` | Tracks eines Rekordbox-Sticks mit echten Grids, Wellen, Cues und Covern |
+| `decklight simulate --replay show.pcapng` | Wireshark-Mitschnitt (pcap/pcapng) oder `decklight record`-Datei mit Originaltiming |
+| `decklight simulate --scenario meine-show.json` | eigener Ablauf (Vorlage: `decklight scenario`) |
 
 ## Kommandozeile
 
