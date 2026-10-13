@@ -1,7 +1,7 @@
 //! `decklight serve`: Kern plus Webserver mit Oberfläche, `/monitor` und `/overlay`.
 
 use anyhow::Result;
-use decklight_server::files::{load, load_working_copy, Persist};
+use decklight_server::files::{load_start, Persist};
 use decklight_server::settings::Settings;
 use decklight_server::{App, Server, ServerConfig, DEFAULT_PORT};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -37,7 +37,8 @@ pub struct ServeArgs {
 pub async fn serve(args: ServeArgs) -> Result<()> {
     let settings_path = args.data_dir.join("settings.json");
     let show_path = args.data_dir.join("show.json");
-    let mut settings: Settings = load(&settings_path)?;
+    let start = load_start(&args.data_dir);
+    let mut settings: Settings = start.settings;
     if args.passive {
         settings.network.passive = true;
     }
@@ -47,10 +48,12 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
     if let Some(p) = args.db_port {
         settings.network.db_port = p;
     }
-    let (name, show) = load_working_copy(&show_path)?;
-    let app = App::start(settings, show).await?;
-    app.set_show_name(&name);
+    let app = App::start(settings, start.show).await?;
+    app.set_show_name(&start.name);
     app.set_library(&args.data_dir);
+    for w in start.warnings {
+        app.warn(decklight_core::Level::Error, w);
+    }
     let ip = if args.local_only {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     } else {
