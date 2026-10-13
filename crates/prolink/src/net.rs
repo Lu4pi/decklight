@@ -93,6 +93,86 @@ pub fn interfaces() -> io::Result<Vec<Interface>> {
     Ok(out)
 }
 
+/// Eine IPv4-Adresse, die Windows kennt, aber (noch) nicht freigegeben hat:
+/// kein Link (Kabel, Switch), Adresskonflikt oder Prüfung läuft. Solche
+/// Karten fehlen in [`interfaces`], weil man an sie nicht binden kann.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InactiveInterface {
+    pub name: String,
+    pub ip: Ipv4Addr,
+    /// Kurzer Grund für die Oberfläche, z. B. „kein Link“.
+    pub reason: String,
+}
+
+/// Unter Windows die Adressen aus `Get-NetIPAddress`, die nicht in
+/// [`interfaces`] stehen. Auf anderen Systemen leer.
+pub fn inactive_interfaces() -> Vec<InactiveInterface> {
+    #[cfg(windows)]
+    {
+        let active: Vec<Ipv4Addr> = interfaces()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|i| i.ip)
+            .collect();
+        windows_addresses()
+            .into_iter()
+            .filter(|i| !active.contains(&i.ip) && !i.ip.is_loopback())
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+#[cfg(windows)]
+fn windows_addresses() -> Vec<InactiveInterface> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+        Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { \
+        $s=(Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).Status; \
+        ($_.InterfaceAlias,$_.IPAddress,$_.AddressState,$s) -join '|' }";
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    match out {
+        Ok(o) => parse_windows_addresses(&String::from_utf8_lossy(&o.stdout)),
+        Err(e) => {
+            tracing::debug!("Get-NetIPAddress nicht verfügbar: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Zeilen `Alias|IP|AddressState|AdapterStatus` aus PowerShell.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_windows_addresses(text: &str) -> Vec<InactiveInterface> {
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.trim().split('|');
+            let name = f.next()?.to_string();
+            let ip: Ipv4Addr = f.next()?.parse().ok()?;
+            let state = f.next().unwrap_or("");
+            let status = f.next().unwrap_or("");
+            let reason = match (state, status) {
+                (_, "Disconnected") | (_, "Not Present") => "kein Link – Kabel/Switch prüfen",
+                (_, "Disabled") => "Adapter deaktiviert",
+                ("Duplicate", _) => "Adresse doppelt im Netz",
+                ("Tentative", _) => "Adresse wird geprüft",
+                ("Preferred", _) => "noch nicht bereit",
+                _ => "nicht nutzbar",
+            };
+            Some(InactiveInterface {
+                name,
+                ip,
+                reason: reason.to_string(),
+            })
+        })
+        .collect()
+}
+
 /// Wählt eine Schnittstelle: nach Name oder IP, sonst die erste mit privater
 /// Adresse (CDJ-Netze laufen fast immer in 169.254/16, 192.168/16 oder 10/8).
 pub fn pick_interface(wanted: Option<&str>) -> io::Result<Interface> {
@@ -554,6 +634,17 @@ async fn announce_loop(
 #[cfg(test)]
 mod number_tests {
     use super::free_number;
+
+    #[test]
+    fn windows_address_lines() {
+        let list = super::parse_windows_addresses(
+            "Ethernet|169.254.10.10|Preferred|Disconnected\r\nWLAN|192.168.1.206|Duplicate|Up\r\nkaputt\r\n",
+        );
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].name, "Ethernet");
+        assert_eq!(list[0].reason, "kein Link – Kabel/Switch prüfen");
+        assert_eq!(list[1].reason, "Adresse doppelt im Netz");
+    }
 
     #[test]
     fn subnet_match() {

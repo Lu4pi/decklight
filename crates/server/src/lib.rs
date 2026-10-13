@@ -1043,6 +1043,9 @@ struct InterfaceView {
     name: String,
     ip: String,
     broadcast: String,
+    /// Gesetzt, wenn Windows die Karte kennt, sie aber nicht nutzbar ist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inactive: Option<String>,
 }
 
 async fn api_interfaces(
@@ -1059,7 +1062,18 @@ async fn api_interfaces(
             name: i.name,
             ip: i.ip.to_string(),
             broadcast: i.broadcast.to_string(),
+            inactive: None,
         })
+        .chain(
+            decklight_prolink::inactive_interfaces()
+                .into_iter()
+                .map(|i| InterfaceView {
+                    name: i.name,
+                    ip: i.ip.to_string(),
+                    broadcast: String::new(),
+                    inactive: Some(i.reason),
+                }),
+        )
         .collect();
     Json(list).into_response()
 }

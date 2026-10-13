@@ -5,7 +5,9 @@
   import type { Settings } from "../lib/types";
 
   let draft = $state<Settings | null>(null);
-  let interfaces = $state<{ name: string; ip: string; broadcast: string }[]>([]);
+  let interfaces = $state<{ name: string; ip: string; broadcast: string; inactive?: string }[]>([]);
+  const usable = $derived(interfaces.filter((i) => !i.inactive));
+  const inactive = $derived(interfaces.filter((i) => i.inactive));
   let midiPorts = $state<string[]>([]);
   let saving = $state(false);
   let oscTest = $state("Go+ Exec 201");
@@ -96,8 +98,8 @@
         </label>
         <label>Port <input type="number" bind:value={draft.timecode.artnet_port} disabled={conn.readonly} /></label>
       </div>
-      {#if interfaces.length}
-        <div class="hint">Broadcast deiner Netze: {interfaces.map((i) => `${i.broadcast} (${i.name})`).join(", ")}</div>
+      {#if usable.length}
+        <div class="hint">Broadcast deiner Netze: {usable.map((i) => `${i.broadcast} (${i.name})`).join(", ")}</div>
       {/if}
       <label>MTC an MIDI-Ausgang
         <select value={draft.timecode.mtc_port ?? ""} disabled={conn.readonly}
@@ -141,9 +143,16 @@
         <select value={draft.network.iface ?? ""} disabled={conn.readonly}
           onchange={(e) => draft && (draft.network.iface = nullable((e.target as HTMLSelectElement).value))}>
           <option value="">automatisch</option>
-          {#each interfaces as i}<option value={i.name}>{i.name} · {i.ip}</option>{/each}
+          {#each usable as i}<option value={i.name}>{i.name} · {i.ip}</option>{/each}
+          {#if draft.network.iface && !usable.some((i) => i.name === draft?.network.iface)}
+            <option value={draft.network.iface}>{draft.network.iface} (nicht gefunden)</option>
+          {/if}
+          {#each inactive as i}<option value={i.name} disabled>{i.name} · {i.ip} ({i.inactive})</option>{/each}
         </select>
       </label>
+      {#each inactive as i}
+        <div class="hint warn">{i.name} ({i.ip}) ist nicht nutzbar: {i.inactive}.</div>
+      {/each}
       <div class="hint">
         Es erscheinen nur Netzwerkkarten mit IPv4-Adresse. Fehlt die Karte zum CDJ-Netz, hat sie keinen Link (Kabel,
         Switch-LED, Adapter prüfen) oder keine Adresse: in Windows fest <code>169.254.10.10</code> /

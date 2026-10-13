@@ -12,8 +12,8 @@ pub mod snapshot;
 
 pub use device::{Device, DeviceTable};
 pub use net::{
-    interface_for, interfaces, pick_interface, Interface, Link, LinkConfig, LinkEvent, PortConfig,
-    VirtualPlayer,
+    inactive_interfaces, interface_for, interfaces, pick_interface, InactiveInterface, Interface,
+    Link, LinkConfig, LinkEvent, PortConfig, VirtualPlayer,
 };
 pub use packet::{parse, Channel, DeviceKind, Packet, PlayState};
 pub use snapshot::{LinkSnapshot, PlayerSnapshot};
