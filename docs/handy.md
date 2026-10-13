@@ -15,5 +15,5 @@ Ohne PIN kann jeder im selben Netz zusehen; mit PIN nur, wer den QR-Code hat.
 Bedienen (Master, Not-Aus, Cues) geht vom Handy nur, wenn **Vom Handy aus bedienen
 erlauben** an ist.
 
-Hinweis: Über `http://` erlauben Browser keine Bildschirmsperre-Sperre. Für lange Shows
+Hinweis: Über `http://` dürfen Seiten die automatische Bildschirmsperre nicht verhindern. Für lange Shows
 die automatische Sperre am Handy abschalten oder das Handy ans Ladekabel hängen.
