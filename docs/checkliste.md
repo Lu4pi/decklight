@@ -40,11 +40,12 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Status-Pakete CDJ parsen (Zustand, Position, Pitch, BPM, Beat, Master, On-Air)
 - [x] Mixer-Status parsen (On-Air je Kanal, Fader soweit verfügbar)
 - [x] Beat-Pakete parsen
-- [ ] Als virtueller Player anmelden (Nummer ohne Konflikt), sauber abmelden  
-  _Stand: Keep-Alive als Player 7 und Konflikterkennung fertig; Nummern-Claim-Ablauf folgt mit Hardware-Test._
+- [x] Als virtueller Player anmelden (Nummer ohne Konflikt), sauber abmelden  
+  _Hört vor der Anmeldung 1,8 s zu, nimmt eine freie Nummer aus 5–15 (nie 1–4) und weicht aus, wenn ein anderes Gerät dieselbe Nummer meldet (`crates/prolink/tests/number.rs`). PRO DJ LINK kennt kein Abmeldepaket: Nach dem Beenden verschwindet DeckLight nach dem Keep-Alive-Timeout von selbst. Der formale Nummern-Claim echter Player (Pakete 0x00/0x02/0x04) ist für 5–15 nicht nötig._
 - [x] dbserver-Client: Metadaten, Cover, Beatgrid, Wellenformen, Cues  
   _Stand: Client und simulierter dbserver (`decklight simulate` liefert Metadaten, Cover, Wellen, Cues). Byte-Layout nach Doku, Abgleich mit echtem CDJ steht aus._
-- [ ] Fallback: Rekordbox-Export vom USB-Stick lesen (rekordcrate)
+- [x] Fallback: Rekordbox-Export vom USB-Stick lesen  
+  _Eigener Leser für `export.pdb` und ANLZ (rekordcrate 0.3 gibt seine Felder nicht frei), geprüft an echten Exporten aus rekordcrate (3886 Tracks, Demo-Stick mit Grid und Wellen). Exporte unter Ausgänge → PRO DJ LINK eintragen; DeckLight nutzt sie, wenn ein Player nach drei Versuchen nichts liefert und die Länge passt._
 - [ ] Cache pro Track; Unit-Tests gegen Mitschnitte  
   _Stand: Cache und Tests gegen den simulierten dbserver fertig; Mitschnitte vom echten CDJ fehlen noch._
 - [x] **Meilenstein:** CLI zeigt live alle Decks mit Position, BPM, Titel  
@@ -56,8 +57,8 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Rückwärtslauf, Pause, Loop-Ende korrekt
 - [x] MasterSelector mit drei Modi + Hysterese
 - [x] Event-Bus (Events typisiert, aufzeichen- und abspielbar)
-- [ ] Simulator: virtuelle CDJs aus Audiodatei + PCAP-Replay  
-  _Stand: virtuelle CDJs/DJM mit JSON-Szenarien fertig; Audiodatei und PCAP-Replay offen._
+- [x] Simulator: virtuelle CDJs aus Audiodatei + PCAP-Replay  
+  _`decklight simulate --audio a.mp3 b.wav` (Tempo, erster Beat, farbige Wellenform und Tags aus der Analyse, ±0,05 BPM im Test), `--usb /Volumes/STICK` (echter Rekordbox-Export) und `--replay mitschnitt.pcapng|.pcap|.jsonl` (Wireshark oder `decklight record`, mit Originaltiming)._
 - [x] **Meilenstein:** Timecode-Abweichung im Simulator < 1 Frame über 10 min  
   _Stand: CDJ-3000 max. 3,4 ms, CDJ-2000NXS2 (nur Beat-Pakete) max. 5,2 ms im Lauf; NXS2 kennt nach Start/Stopp/Sprung die Position erst mit dem nächsten Beat genau (`crates/engine/tests/timecode_accuracy.rs`)._
 
