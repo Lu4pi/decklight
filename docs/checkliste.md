@@ -71,7 +71,7 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [x] Track-Offsets: automatische Vergabe, Editor, CSV-Import/Export  
   _Automatik und CSV (`decklight run --offsets`), Editor in der Oberfläche unter „Setlist & Offsets“._
 - [ ] Test mit grandMA3 onPC: Timecode-Show auf zwei Tracks programmieren, Deck-Wechsel, Pitch ±8 %, Loop  
-  _Automatischer Ersatz: `crates/core/tests/timecode_e2e.rs` (simulierter CDJ → Art-Net-Empfänger, jeder Frame zur richtigen Zeit). Test am echten Pult steht aus._
+  _Automatischer Ersatz: `crates/core/tests/timecode_e2e.rs` (simulierter CDJ → Art-Net-Empfänger, jeder Frame zur richtigen Zeit) und `crates/core/tests/ma3_show_e2e.rs` (genau dieser Ablauf: zwei Tracks, Deck-Wechsel im On-Air-Modus, Pitch +8 %/−8 %, Loop; ein nachgebautes Pult löst Timecode-Ereignisse aus, Abweichung ≈ 1 ms bei 30 fps). Test am echten Pult steht aus._
 - [ ] **Meilenstein:** MA3 fährt eine Timecode-Show synchron zu einem echten oder simulierten CDJ
 
 ### Phase 4: Trigger
