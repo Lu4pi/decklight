@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Neuer Push auf denselben PR bricht den alten Lauf ab.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
