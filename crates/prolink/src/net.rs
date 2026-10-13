@@ -64,38 +64,52 @@ pub struct Interface {
     pub loopback: bool,
 }
 
-/// Alle IPv4-Schnittstellen, Loopback zuletzt.
+/// Alle nutzbaren IPv4-Schnittstellen, Loopback zuletzt. Unter Windows kommen
+/// Karten dazu, die nur `Get-NetIPAddress` meldet (Preferred, Adapter Up).
 pub fn interfaces() -> io::Result<Vec<Interface>> {
-    let mut out: Vec<Interface> = if_addrs::get_if_addrs()?
+    let mut out = if_addrs_list()?;
+    #[cfg(windows)]
+    for a in windows::addresses() {
+        if a.usable() && !out.iter().any(|i| i.ip == a.ip) {
+            tracing::debug!(name = %a.name, ip = %a.ip, "Karte nur über Get-NetIPAddress gefunden");
+            out.push(a.to_interface());
+        }
+    }
+    out.sort_by_key(|i| i.loopback);
+    Ok(out)
+}
+
+fn if_addrs_list() -> io::Result<Vec<Interface>> {
+    Ok(if_addrs::get_if_addrs()?
         .into_iter()
         .filter_map(|i| match i.addr {
             if_addrs::IfAddr::V4(v4) => {
                 let broadcast = v4
                     .broadcast
                     .unwrap_or_else(|| Ipv4Addr::from(u32::from(v4.ip) | !u32::from(v4.netmask)));
-                let mac = mac_address::mac_address_by_name(&i.name)
-                    .ok()
-                    .flatten()
-                    .map(|m| m.bytes());
                 Some(Interface {
                     loopback: v4.ip.is_loopback(),
+                    mac: mac_of(&i.name),
                     name: i.name,
                     ip: v4.ip,
                     netmask: v4.netmask,
                     broadcast,
-                    mac,
                 })
             }
             _ => None,
         })
-        .collect();
-    out.sort_by_key(|i| i.loopback);
-    Ok(out)
+        .collect())
 }
 
-/// Eine IPv4-Adresse, die Windows kennt, aber (noch) nicht freigegeben hat:
-/// kein Link (Kabel, Switch), Adresskonflikt oder Prüfung läuft. Solche
-/// Karten fehlen in [`interfaces`], weil man an sie nicht binden kann.
+fn mac_of(name: &str) -> Option<[u8; 6]> {
+    mac_address::mac_address_by_name(name)
+        .ok()
+        .flatten()
+        .map(|m| m.bytes())
+}
+
+/// Eine IPv4-Adresse, die Windows kennt, aber nicht nutzbar ist: kein Link
+/// (Kabel, Switch), Adresskonflikt oder Prüfung läuft.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InactiveInterface {
     pub name: String,
@@ -114,9 +128,14 @@ pub fn inactive_interfaces() -> Vec<InactiveInterface> {
             .into_iter()
             .map(|i| i.ip)
             .collect();
-        windows_addresses()
+        windows::addresses()
             .into_iter()
-            .filter(|i| !active.contains(&i.ip) && !i.ip.is_loopback())
+            .filter(|a| !active.contains(&a.ip) && !a.ip.is_loopback())
+            .map(|a| InactiveInterface {
+                reason: a.reason().to_string(),
+                name: a.name,
+                ip: a.ip,
+            })
             .collect()
     }
     #[cfg(not(windows))]
@@ -125,49 +144,104 @@ pub fn inactive_interfaces() -> Vec<InactiveInterface> {
     }
 }
 
-#[cfg(windows)]
-fn windows_addresses() -> Vec<InactiveInterface> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
-        Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { \
-        $s=(Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).Status; \
-        ($_.InterfaceAlias,$_.IPAddress,$_.AddressState,$s) -join '|' }";
-    let out = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-    match out {
-        Ok(o) => parse_windows_addresses(&String::from_utf8_lossy(&o.stdout)),
-        Err(e) => {
-            tracing::debug!("Get-NetIPAddress nicht verfügbar: {e}");
-            Vec::new()
+/// Eine Zeile aus `Get-NetIPAddress` samt Adapterstatus.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone)]
+struct WinAddress {
+    name: String,
+    ip: Ipv4Addr,
+    prefix: u8,
+    state: String,
+    status: String,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl WinAddress {
+    fn usable(&self) -> bool {
+        self.state == "Preferred" && (self.status == "Up" || self.status.is_empty())
+    }
+
+    fn reason(&self) -> &'static str {
+        match (self.state.as_str(), self.status.as_str()) {
+            (_, "Disconnected") | (_, "Not Present") => "kein Link – Kabel/Switch prüfen",
+            (_, "Disabled") => "Adapter deaktiviert",
+            ("Duplicate", _) => "Adresse doppelt im Netz",
+            ("Tentative", _) => "Adresse wird geprüft",
+            ("Preferred", _) => "noch nicht bereit",
+            _ => "nicht nutzbar",
+        }
+    }
+
+    fn to_interface(&self) -> Interface {
+        let mask = u32::MAX
+            .checked_shl(32 - u32::from(self.prefix.min(32)))
+            .unwrap_or(0);
+        Interface {
+            name: self.name.clone(),
+            ip: self.ip,
+            netmask: Ipv4Addr::from(mask),
+            broadcast: Ipv4Addr::from(u32::from(self.ip) | !mask),
+            mac: mac_of(&self.name),
+            loopback: self.ip.is_loopback(),
         }
     }
 }
 
-/// Zeilen `Alias|IP|AddressState|AdapterStatus` aus PowerShell.
+#[cfg(windows)]
+mod windows {
+    use super::WinAddress;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    /// PowerShell braucht rund eine Sekunde; das Ergebnis kurz merken, weil
+    /// die Ankündigungsschleife bei fehlender Karte jeden Takt nachfragt.
+    static CACHE: Mutex<Option<(Instant, Vec<WinAddress>)>> = Mutex::new(None);
+
+    pub(super) fn addresses() -> Vec<WinAddress> {
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, list)) = cache.as_ref() {
+            if at.elapsed() < Duration::from_secs(5) {
+                return list.clone();
+            }
+        }
+        let list = query();
+        *cache = Some((Instant::now(), list.clone()));
+        list
+    }
+
+    fn query() -> Vec<WinAddress> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+            Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { \
+            $s=(Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).Status; \
+            ($_.InterfaceAlias,$_.IPAddress,$_.PrefixLength,$_.AddressState,$s) -join '|' }";
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        match out {
+            Ok(o) => super::parse_windows_addresses(&String::from_utf8_lossy(&o.stdout)),
+            Err(e) => {
+                tracing::debug!("Get-NetIPAddress nicht verfügbar: {e}");
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// Zeilen `Alias|IP|Präfix|AddressState|AdapterStatus` aus PowerShell.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn parse_windows_addresses(text: &str) -> Vec<InactiveInterface> {
+fn parse_windows_addresses(text: &str) -> Vec<WinAddress> {
     text.lines()
         .filter_map(|l| {
             let mut f = l.trim().split('|');
-            let name = f.next()?.to_string();
-            let ip: Ipv4Addr = f.next()?.parse().ok()?;
-            let state = f.next().unwrap_or("");
-            let status = f.next().unwrap_or("");
-            let reason = match (state, status) {
-                (_, "Disconnected") | (_, "Not Present") => "kein Link – Kabel/Switch prüfen",
-                (_, "Disabled") => "Adapter deaktiviert",
-                ("Duplicate", _) => "Adresse doppelt im Netz",
-                ("Tentative", _) => "Adresse wird geprüft",
-                ("Preferred", _) => "noch nicht bereit",
-                _ => "nicht nutzbar",
-            };
-            Some(InactiveInterface {
-                name,
-                ip,
-                reason: reason.to_string(),
+            Some(WinAddress {
+                name: f.next()?.to_string(),
+                ip: f.next()?.parse().ok()?,
+                prefix: f.next()?.parse().ok()?,
+                state: f.next().unwrap_or("").to_string(),
+                status: f.next().unwrap_or("").to_string(),
             })
         })
         .collect()
@@ -222,6 +296,18 @@ impl VirtualPlayer {
             ip: iface.ip,
             mac: iface.mac.unwrap_or_default(),
             broadcast: iface.broadcast,
+        }
+    }
+
+    /// Noch ohne Netzwerkkarte: meldet sich erst an, wenn ein Player in einem
+    /// Netz auftaucht, das dieser Rechner hat (nur mit `follow_devices`).
+    pub fn waiting(number: u8) -> Self {
+        Self {
+            name: "DeckLight".into(),
+            number,
+            ip: Ipv4Addr::UNSPECIFIED,
+            mac: [0; 6],
+            broadcast: Ipv4Addr::UNSPECIFIED,
         }
     }
 
@@ -633,6 +719,9 @@ async fn announce_loop(
                 break;
             }
         }
+        if vp.ip.is_unspecified() {
+            continue; // noch keine Karte im Netz der Player
+        }
         vp.number = own_number.load(Ordering::Relaxed);
         let peers = devices.lock().map(|t| t.len()).unwrap_or(0);
         let bytes = encode::keep_alive(&vp.keep_alive(u8::try_from(peers + 1).unwrap_or(u8::MAX)));
@@ -649,12 +738,22 @@ mod number_tests {
     #[test]
     fn windows_address_lines() {
         let list = super::parse_windows_addresses(
-            "Ethernet|169.254.10.10|Preferred|Disconnected\r\nWLAN|192.168.1.206|Duplicate|Up\r\nkaputt\r\n",
+            "Ethernet|169.254.10.10|16|Preferred|Disconnected\r\nEthernet 3|169.254.10.10|16|Preferred|Up\r\nWLAN|192.168.1.206|24|Duplicate|Up\r\nkaputt\r\n",
         );
-        assert_eq!(list.len(), 2);
-        assert_eq!(list[0].name, "Ethernet");
-        assert_eq!(list[0].reason, "kein Link – Kabel/Switch prüfen");
-        assert_eq!(list[1].reason, "Adresse doppelt im Netz");
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].reason(), "kein Link – Kabel/Switch prüfen");
+        assert!(!list[0].usable());
+        assert!(list[1].usable());
+        let i = list[1].to_interface();
+        assert_eq!(
+            i.netmask,
+            "255.255.0.0".parse::<std::net::Ipv4Addr>().unwrap()
+        );
+        assert_eq!(
+            i.broadcast,
+            "169.254.255.255".parse::<std::net::Ipv4Addr>().unwrap()
+        );
+        assert_eq!(list[2].reason(), "Adresse doppelt im Netz");
     }
 
     #[test]
