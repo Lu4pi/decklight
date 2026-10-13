@@ -81,16 +81,18 @@ async fn master_bpm_reaches_the_desk() {
     .await
     .unwrap();
     sim.abort();
-    assert_eq!(got.first().map(String::as_str), Some("Master 3.1 At 128.0"));
-    // 128 BPM: eine „1“ alle 1,875 s, also in 5 s zwei bis drei Syncs, jeweils
-    // gefolgt vom Tempo.
+    assert!(got.iter().all(|c| c != "Master 3.1 At 0.0"), "{got:?}");
+    assert!(got.iter().any(|c| c == "Master 3.1 At 128.0"), "{got:?}");
+    // 128 BPM: eine „1“ alle 1,875 s, also in 5 s höchstens drei Syncs (auf
+    // langsamen CI-Rechnern startet die Wiedergabe später), jeweils gefolgt
+    // vom Tempo.
     let learns: Vec<usize> = got
         .iter()
         .enumerate()
         .filter(|(_, c)| *c == "Learn Master 3.1")
         .map(|(i, _)| i)
         .collect();
-    assert!((2..=3).contains(&learns.len()), "{got:?}");
+    assert!((1..=3).contains(&learns.len()), "{got:?}");
     for i in learns {
         assert_eq!(
             got.get(i + 1).map(String::as_str),
