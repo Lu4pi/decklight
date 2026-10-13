@@ -97,6 +97,7 @@ pub async fn run(args: RunArgs) -> Result<()> {
             osc: args.osc,
             osc_prefix: args.osc_prefix.clone(),
             midi_port: args.midi.clone(),
+            ..Default::default()
         },
         ..Default::default()
     })

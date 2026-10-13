@@ -259,7 +259,17 @@ impl DbClient {
                 )
                 .await
             {
-                Ok(blob) => return anlz::parse_blue_detail(&blob).ok_or(DbError::NotFound),
+                Ok(blob) => {
+                    let w = anlz::parse_blue_detail(&blob).ok_or(DbError::NotFound)?;
+                    tracing::info!(
+                        bytes = blob.len(),
+                        columns = w.columns.len(),
+                        filled = w.columns.iter().filter(|c| c.height > 0).count(),
+                        head = ?&blob[..blob.len().min(32)],
+                        "Blaue Wellenform vom Player"
+                    );
+                    return Ok(w);
+                }
                 Err(e) => last = e,
             }
         }

@@ -2,7 +2,7 @@
 
 use crate::runtime::{content_key, track_key, Shared};
 use decklight_engine::{BeatGrid, EngineEvent, Stamped, TrackRef};
-use decklight_library::dbserver::client::asking_player;
+use decklight_library::dbserver::client::{asking_player, DbClient};
 use decklight_library::export::Export;
 use decklight_library::{load_track, TrackData, TrackLocation};
 use decklight_show::{OffsetTable, TrackKey, TriggerTable};
@@ -220,6 +220,16 @@ async fn fetch(
         match load_track(ip, query_port, asking, loc).await {
             Ok(data) => {
                 store(req, data, shared, events, epoch);
+                if loc.track_type != 1 {
+                    tokio::spawn(refresh_waveform(
+                        r,
+                        ip,
+                        query_port,
+                        asking,
+                        loc,
+                        shared.clone(),
+                    ));
+                }
                 return true;
             }
             Err(e) => {
@@ -245,6 +255,66 @@ async fn fetch(
         }
     }
     false
+}
+
+fn filled(w: Option<&decklight_library::Waveform>) -> usize {
+    w.map_or(0, |w| w.columns.iter().filter(|c| c.height > 0).count())
+}
+
+/// Der CDJ-3000 analysiert nicht analysierte Dateien beim Laden selbst, die
+/// Wellenform füllt sich dabei nach und nach. Nachfragen, bis sie sich nicht
+/// mehr ändert; die Oberfläche lädt bei jeder Änderung neu.
+async fn refresh_waveform(
+    r: TrackRef,
+    ip: IpAddr,
+    query_port: u16,
+    asking: u8,
+    loc: TrackLocation,
+    shared: Arc<Mutex<Shared>>,
+) {
+    let current = |s: &Shared| {
+        let key = s.keys.get(&r)?.clone();
+        let n = filled(s.tracks.get(&key)?.waveform.as_ref());
+        Some((key, n))
+    };
+    let Some((_, mut last)) = shared.lock().ok().and_then(|s| current(&s)) else {
+        return;
+    };
+    let mut unchanged = 0;
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let still_loaded = shared
+            .lock()
+            .map(|s| s.engine.decks().any(|d| d.track == Some(r)))
+            .unwrap_or(false);
+        if !still_loaded {
+            return;
+        }
+        let Ok(mut c) = DbClient::connect_via(ip, query_port, asking).await else {
+            continue;
+        };
+        let w = c.blue_waveform(loc).await;
+        c.close().await;
+        let Ok(w) = w else { continue };
+        let n = filled(Some(&w));
+        if n > last {
+            let Ok(mut s) = shared.lock() else { return };
+            let Some((key, _)) = current(&s) else { return };
+            if let Some(old) = s.tracks.get(&key) {
+                let mut data = (**old).clone();
+                data.waveform = Some(w);
+                s.tracks.insert(key, Arc::new(data));
+            }
+            tracing::info!(filled = n, "Wellenform vom Player nachgeladen");
+            last = n;
+            unchanged = 0;
+        } else {
+            unchanged += 1;
+            if unchanged >= 3 && last > 0 {
+                return;
+            }
+        }
+    }
 }
 
 /// Track vom Medium im Player lesen (NFS). `true` bei Erfolg.

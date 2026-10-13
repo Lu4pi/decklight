@@ -90,6 +90,7 @@ async fn osc_cues_fire_once_on_time_and_stop_on_panic() {
             osc: Some(desk_addr),
             osc_prefix: "gma3".into(),
             midi_port: None,
+            bpm_command: None,
         },
         ..Default::default()
     })

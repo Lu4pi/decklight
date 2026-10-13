@@ -23,6 +23,9 @@ pub struct TrackSummary {
     /// Metadaten schon geladen.
     pub loaded: bool,
     pub offset_ms: Option<f64>,
+    /// Gefüllte Wellenform-Spalten; steigt, solange ein CDJ-3000 eine nicht
+    /// analysierte Datei noch selbst analysiert (Oberfläche lädt dann neu).
+    pub wave: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +84,7 @@ pub fn state(s: &Shared, t: f64, timecode_enabled: bool, rate: FrameRate) -> Sta
                         has_artwork: false,
                         loaded: false,
                         offset_ms,
+                        wave: 0,
                     },
                 }
             });
@@ -128,6 +132,9 @@ pub fn summary(key: &TrackKey, data: &TrackData, offset_ms: Option<f64>) -> Trac
         has_artwork: data.artwork.is_some(),
         loaded: true,
         offset_ms,
+        wave: data.waveform.as_ref().map_or(0, |w| {
+            u32::try_from(w.columns.iter().filter(|c| c.height > 0).count()).unwrap_or(u32::MAX)
+        }),
     }
 }
 

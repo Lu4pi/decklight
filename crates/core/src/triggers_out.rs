@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 /// Wohin Aktionen gehen.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionOutConfig {
     /// OSC-Ziel, z. B. die grandMA3 auf Port 8000.
     pub osc: Option<SocketAddr>,
@@ -26,6 +26,37 @@ pub struct ActionOutConfig {
     /// MIDI-Ausgang für Note/CC (Teil des Namens).
     #[serde(default)]
     pub midi_port: Option<String>,
+    /// MA3-Befehl, der bei jeder Tempoänderung des Master-Decks per OSC geht,
+    /// `{bpm}` wird ersetzt (z. B. `Master 3.1 At {bpm}` für Speed-Master 1).
+    /// Leer = aus. Läuft auch bei Not-Aus weiter, wie der Timecode.
+    #[serde(default = "default_bpm_command")]
+    pub bpm_command: Option<String>,
+}
+
+/// Speed-Master 1 der grandMA3 folgt dem Tempo des Master-Decks.
+pub const DEFAULT_BPM_COMMAND: &str = "Master 3.1 At {bpm}";
+
+fn default_bpm_command() -> Option<String> {
+    Some(DEFAULT_BPM_COMMAND.into())
+}
+
+impl Default for ActionOutConfig {
+    fn default() -> Self {
+        Self {
+            osc: None,
+            osc_prefix: String::new(),
+            midi_port: None,
+            bpm_command: default_bpm_command(),
+        }
+    }
+}
+
+/// Tempo höchstens so oft an das Pult schicken.
+const BPM_INTERVAL: Duration = Duration::from_millis(100);
+
+/// `{bpm}` im Befehl ersetzen, eine Nachkommastelle.
+pub fn bpm_command(template: &str, bpm: f64) -> String {
+    template.replace("{bpm}", &format!("{bpm:.1}"))
 }
 
 pub(crate) struct TriggerThread {
@@ -143,6 +174,8 @@ fn run(
     let mut rx = events.subscribe();
     let tick = Duration::from_millis(2);
     let mut next = Instant::now();
+    let bpm_template = cfg.bpm_command.clone().filter(|c| !c.trim().is_empty());
+    let mut bpm_sent: Option<(f64, Instant)> = None;
 
     while !stop.load(Ordering::Relaxed) {
         next += tick;
@@ -199,6 +232,23 @@ fn run(
                 })
                 .collect();
             firings.extend(engine.update(t, &inputs, master, &s.triggers));
+            if let Some(template) = &bpm_template {
+                // Master-Deck, sonst (ein CDJ ohne Sync-Master) das spielende Deck.
+                let bpm = master
+                    .and_then(|m| s.engine.deck(m))
+                    .or_else(|| s.engine.decks().find(|d| d.moving))
+                    .and_then(|d| d.effective_bpm())
+                    .map(|b| (b * 10.0).round() / 10.0);
+                let due = bpm_sent.is_none_or(|(last, at)| {
+                    bpm.is_some_and(|b| (b - last).abs() >= 0.05) && at.elapsed() >= BPM_INTERVAL
+                });
+                if let (Some(b), true, Some(osc)) = (bpm, due, dispatcher.osc.as_ref()) {
+                    if let Err(e) = osc.command(&bpm_command(template, b)) {
+                        tracing::debug!(error = %e, "Tempo nicht gesendet");
+                    }
+                    bpm_sent = Some((b, Instant::now()));
+                }
+            }
         }
         if firings.is_empty() {
             continue;

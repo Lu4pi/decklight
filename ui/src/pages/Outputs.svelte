@@ -122,6 +122,14 @@
         </label>
         <label>Präfix <input placeholder="gma3" bind:value={draft.actions.osc_prefix} disabled={conn.readonly} /></label>
       </div>
+      <label>Tempo an die MA3 (BPM des Master-Decks, leer = aus)
+        <input placeholder="Master 3.1 At {'{bpm}'}" value={draft.actions.bpm_command ?? ""} disabled={conn.readonly}
+          onchange={(e) => draft && (draft.actions.bpm_command = nullable((e.target as HTMLInputElement).value))} />
+      </label>
+      <div class="hint">
+        Geht bei jeder Tempoänderung per OSC raus, <code>{'{bpm}'}</code> wird ersetzt. <code>Master 3.1</code> ist
+        Speed-Master 1; in der MA3 Effekte/Phaser diesem Speed-Master zuweisen.
+      </div>
       <div class="row">
         <input class="grow" bind:value={oscTest} disabled={conn.readonly} />
         <button onclick={() => test("osc")} disabled={conn.readonly || dirty}>OSC testen</button>
