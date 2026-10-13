@@ -2,7 +2,9 @@ name: Release
 
 # Ein Tag `vX.Y.Z` baut signierte Installer für macOS (Universal) und Windows und
 # legt sie als Entwurf auf der Release-Seite ab; veröffentlicht wird von Hand.
-# Von Hand gestartet (workflow_dispatch) darf der Lauf zum Testen unsigniert sein.
+# Von Hand gestartet (workflow_dispatch) oder per Push auf einen Branch
+# `testbuild/...` darf der Lauf zum Testen unsigniert sein; die Installer liegen
+# dann als Artefakte am Lauf.
 #
 # Secrets (Repository → Settings → Secrets and variables → Actions):
 #   macOS:   APPLE_CERTIFICATE (Developer-ID-Application-Zertifikat als .p12, base64),
@@ -15,6 +17,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: ["testbuild/**"]
   workflow_dispatch:
     inputs:
       allow_unsigned:
@@ -63,7 +66,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     env:
-      UNSIGNED_OK: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unsigned }}
+      UNSIGNED_OK: ${{ (github.event_name == 'workflow_dispatch' && inputs.allow_unsigned) || startsWith(github.ref, 'refs/heads/testbuild/') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
