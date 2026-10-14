@@ -2,6 +2,9 @@
 
 ## Unveröffentlicht
 
+- **Startbildschirm:** Beim Öffnen der App läuft ein animierter Ladebildschirm
+  (Licht schwenkt, Decks drehen, Beat-Anzeige im 120er-Takt), bis der Kern
+  bereit ist. Monitor und OBS-Overlay starten ohne ihn.
 - **Auto-Pilot:** Licht folgt dem Track, wenn der Operator kurz weg ist. DeckLight
   liest die rekordbox-Phrasenanalyse (PSSI) und verrechnet sie mit der
   Drei-Band-Wellenform zu Intro, Groove, Breakdown, Build-up, Drop, Pausen und

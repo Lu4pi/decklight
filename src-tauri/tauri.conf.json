@@ -17,7 +17,7 @@
         "height": 900,
         "minWidth": 1024,
         "minHeight": 640,
-        "backgroundColor": "#0b0d10",
+        "backgroundColor": "#000000",
         "label": "main",
         "create": false
       }
