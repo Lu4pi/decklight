@@ -2,6 +2,8 @@
 //! und schickt die Aktionen per OSC oder MIDI raus.
 
 use crate::runtime::Shared;
+use decklight_auto::config::Fill;
+use decklight_auto::{AutoConfig, AutoCue, AutoFiring, DeckView, Pilot, Structure};
 use decklight_engine::{EngineEvent, Stamped};
 use decklight_outputs::midi::MidiOut;
 use decklight_outputs::osc::OscSender;
@@ -39,6 +41,9 @@ pub struct ActionOutConfig {
     /// geht sofort der Tempo-Befehl hinterher. Leer = aus.
     #[serde(default = "default_phase_command")]
     pub phase_command: Option<String>,
+    /// Auto-Pilot: Befehle je Abschnitt, Schattenmodus, OSC-Schalter.
+    #[serde(default)]
+    pub auto: AutoConfig,
 }
 
 /// Speed-Master 1 der grandMA3 folgt dem Tempo des Master-Decks. Ohne
@@ -79,6 +84,7 @@ impl Default for ActionOutConfig {
             midi_port: None,
             bpm_command: default_bpm_command(),
             phase_command: default_phase_command(),
+            auto: AutoConfig::default(),
         }
     }
 }
@@ -210,6 +216,7 @@ fn run(
     let mut bpm_sent: Option<(f64, Instant)> = None;
     let phase_template = cfg.phase_command.clone().filter(|c| !c.trim().is_empty());
     let mut tempo_changed: Option<Instant> = None;
+    let mut pilot = Pilot::new();
 
     while !stop.load(Ordering::Relaxed) {
         next += tick;
@@ -240,8 +247,11 @@ fn run(
                 Err(_) => break,
             }
         }
+        // Build-up-Stufen: gehen ohne Log raus (sonst 50 Einträge je Build).
+        let mut quiet_actions: Vec<Action> = Vec::new();
         {
-            let Ok(s) = shared.lock() else { return };
+            let Ok(mut guard) = shared.lock() else { return };
+            let s: &mut Shared = &mut guard;
             let master = s.engine.master();
             for ev in &deck_events {
                 firings.extend(engine.on_event(ev, master, &s.triggers));
@@ -266,6 +276,37 @@ fn run(
                 })
                 .collect();
             firings.extend(engine.update(t, &inputs, master, &s.triggers));
+            drop(inputs);
+            for f in auto_step(&mut pilot, s, t, master, &keys, &cfg.auto) {
+                let actions = cfg.auto.actions(
+                    &f.cue,
+                    f.rotation,
+                    Fill {
+                        deck: f.deck,
+                        bpm: f.bpm,
+                        pct: None,
+                    },
+                );
+                if matches!(f.cue, AutoCue::BuildLevel(_)) {
+                    if !cfg.auto.shadow {
+                        quiet_actions.extend(actions);
+                    }
+                    continue;
+                }
+                let tag = if cfg.auto.shadow {
+                    "Auto (Schatten)"
+                } else {
+                    "Auto"
+                };
+                firings.push(Firing {
+                    deck: f.deck,
+                    source: FiringSource::Auto {
+                        name: format!("{tag}: {}", f.reason),
+                    },
+                    actions,
+                    late_ms: 0.0,
+                });
+            }
             // Tempoquelle: Master-Deck, sonst (ein CDJ ohne Sync-Master) das
             // spielende Deck.
             let source = master
@@ -307,15 +348,22 @@ fn run(
                 }
             }
         }
+        for a in &quiet_actions {
+            if let Err(e) = dispatcher.send(a) {
+                tracing::debug!(error = %e, "Build-up-Stufe nicht gesendet");
+            }
+        }
         if firings.is_empty() {
             continue;
         }
 
         let mut done = Vec::with_capacity(firings.len());
         for f in firings {
+            let shadow = cfg.auto.shadow && matches!(f.source, FiringSource::Auto { .. });
             let errors: Vec<String> = f
                 .actions
                 .iter()
+                .filter(|_| !shadow)
                 .filter_map(|a| dispatcher.send(a).err())
                 .collect();
             let error = (!errors.is_empty()).then(|| errors.join("; "));
@@ -355,6 +403,59 @@ fn run(
             });
         }
     }
+}
+
+/// Auto-Pilot einen Schritt weiter: Ein/Aus übernehmen, Decks auswerten,
+/// Status für die Oberfläche ablegen. Bei Not-Aus schweigt er und sendet nach
+/// dem Entsperren den aktuellen Abschnitt neu.
+fn auto_step(
+    pilot: &mut Pilot,
+    s: &mut Shared,
+    t: f64,
+    master: Option<u8>,
+    keys: &[Option<TrackKey>],
+    cfg: &AutoConfig,
+) -> Vec<AutoFiring> {
+    let mut out = Vec::new();
+    if s.auto_active != pilot.active() {
+        out.extend(pilot.set_active(s.auto_active));
+    }
+    if pilot.active() {
+        if s.triggers.armed {
+            let structures: Vec<Option<Arc<Structure>>> = keys
+                .iter()
+                .map(|k| k.as_ref().and_then(|k| s.structure(k)))
+                .collect();
+            let views: Vec<DeckView<'_>> = s
+                .engine
+                .decks()
+                .zip(keys.iter().zip(&structures))
+                .map(|(d, (key, st))| DeckView {
+                    number: d.number,
+                    moving: d.moving,
+                    on_air: d.on_air,
+                    position_ms: d.position_at(t),
+                    rate: d.rate(),
+                    bpm: d.effective_bpm(),
+                    structure: st.as_deref(),
+                    has_manual_cues: key
+                        .as_ref()
+                        .is_some_and(|k| s.triggers.cues(k).iter().any(|c| !c.actions.is_empty())),
+                })
+                .collect();
+            out.extend(pilot.update(t, &views, master, cfg));
+        } else {
+            pilot.reset();
+        }
+    }
+    let mut status = pilot.status().clone();
+    status.active = s.auto_active;
+    status.shadow = cfg.shadow;
+    if s.auto_active && !s.triggers.armed {
+        status.note = "Not-Aus: Auto sendet nichts".into();
+    }
+    s.auto_status = status;
+    out
 }
 
 #[cfg(test)]

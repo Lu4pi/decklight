@@ -41,6 +41,7 @@ decklight-core = { path = "crates/core" }
 decklight-library = { path = "crates/library" }
 decklight-triggers = { path = "crates/triggers" }
 decklight-server = { path = "crates/server" }
+decklight-auto = { path = "crates/auto" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

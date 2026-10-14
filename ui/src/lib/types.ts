@@ -73,6 +73,65 @@ export interface StateView {
     rate: FrameRate;
   };
   mixer_bpm: number | null;
+  auto: AutoStatus;
+}
+
+export type Section = "intro" | "groove" | "breakdown" | "build" | "drop" | "outro";
+export type StructureSource = "phrases" | "waveform" | "both";
+
+export interface Segment {
+  section: Section;
+  start_ms: number;
+  end_ms: number;
+  bars: number;
+  /** Sicherheit 0–100. */
+  confidence: number;
+  source: StructureSource;
+}
+
+export interface StructureView {
+  segments: Segment[];
+  pauses: { start_ms: number; end_ms: number }[];
+  has_phrases: boolean;
+  has_bands: boolean;
+}
+
+export interface AutoStatus {
+  active: boolean;
+  shadow: boolean;
+  deck: number | null;
+  section: Section | null;
+  confidence: number;
+  source: StructureSource | null;
+  next: { section: Section; bars: number } | null;
+  build_pct: number | null;
+  note: string;
+}
+
+export interface AutoCommands {
+  intro: string[];
+  groove: string[];
+  breakdown: string[];
+  build: string[];
+  drop: string[];
+  outro: string[];
+  hit: string[];
+  pause: string[];
+  stop: string[];
+  build_level: string;
+  release: string[];
+}
+
+export interface AutoConfig {
+  shadow: boolean;
+  min_confidence: number;
+  lead_ms: number;
+  sequence: string;
+  rotate_bars: number;
+  hit_every_bars: number;
+  manual_cues: "complement" | "yield";
+  osc_in_port: number | null;
+  commands: AutoCommands;
 }
 
 export interface DeviceInfo {
@@ -204,7 +263,14 @@ export interface Settings {
     artnet_port: number;
     mtc_port: string | null;
   };
-  actions: { osc: string | null; osc_prefix: string; midi_port: string | null; bpm_command: string | null; phase_command: string | null };
+  actions: {
+    osc: string | null;
+    osc_prefix: string;
+    midi_port: string | null;
+    bpm_command: string | null;
+    phase_command: string | null;
+    auto: AutoConfig;
+  };
   web: { pin: string | null; allow_lan_control: boolean };
 }
 
@@ -223,6 +289,8 @@ export interface TrackDetail {
   cues: Cue[];
   /** `data`: je Spalte Höhe, R, G, B. `bands`: je Spalte Bass, Mitten, Höhen (0–31). */
   waveform: { per_second: number; columns: number; data: string; bands?: string } | null;
+  /** Erkannte Abschnitte (Auto-Pilot). */
+  structure: StructureView | null;
 }
 
 export interface Stamped {

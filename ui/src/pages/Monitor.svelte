@@ -7,6 +7,14 @@
   import PinPrompt from "../components/PinPrompt.svelte";
   import Logo from "../components/Logo.svelte";
   import SegText from "../components/SegText.svelte";
+  import { SECTION_COLOR, SECTION_LABEL, inBars } from "../lib/sections";
+  import { toast } from "../lib/toast.svelte";
+  import Toast from "../components/Toast.svelte";
+
+  async function toggleAuto() {
+    const r = await conn.command({ cmd: "set_auto", on: !s?.auto.active });
+    if (!r.ok) toast(r.error ?? "Auto nicht umgeschaltet (Bedienung aus dem Netz erlaubt?)", "error");
+  }
 
   const s = $derived(conn.state);
   const decks = $derived((s?.decks ?? []).filter((d) => d.number <= 6));
@@ -40,6 +48,24 @@
         {#if s && !s.armed}<b class="off">Trigger gesperrt</b>{/if}
         {#if !conn.connected}<b class="off">keine Verbindung</b>{/if}
       </div>
+      {#if s}
+        <div class="autorow">
+          <button class="auto" class:on={s.auto.active} class:shadow={s.auto.active && s.auto.shadow} onclick={toggleAuto}
+            disabled={conn.readonly}>
+            AUTO {s.auto.active ? (s.auto.shadow ? "SCHATTEN" : "AN") : "AUS"}
+          </button>
+          {#if s.auto.active && s.auto.section}
+            <span class="asec" style:color={SECTION_COLOR[s.auto.section]}>
+              {SECTION_LABEL[s.auto.section]}{s.auto.build_pct != null ? ` ${s.auto.build_pct} %` : ""}
+            </span>
+            {#if s.auto.next}
+              <span class="anext">{SECTION_LABEL[s.auto.next.section]} {inBars(s.auto.next.bars)}</span>
+            {/if}
+          {:else if s.auto.active && s.auto.note}
+            <span class="anext">{s.auto.note}</span>
+          {/if}
+        </div>
+      {/if}
     </header>
 
     {#if decks.length === 0}
@@ -70,6 +96,7 @@
       {/each}
     </div>
   </div>
+  <Toast />
 {/if}
 
 <style>
@@ -99,6 +126,41 @@
   }
   .mtc {
     font-family: var(--mono);
+  }
+  .autorow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .auto {
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    padding: 10px 18px;
+    border-radius: 6px;
+    border: 2px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 15px;
+  }
+  .auto.on {
+    background: #1fae3a;
+    border-color: #1fae3a;
+    color: #000;
+  }
+  .auto.shadow {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .asec {
+    font-weight: 800;
+    text-transform: uppercase;
+    font-size: 18px;
+  }
+  .anext {
+    color: var(--text-dim);
+    font-size: 13px;
   }
   .mtc.run {
     color: var(--tc-run);

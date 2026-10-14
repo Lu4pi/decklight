@@ -160,6 +160,7 @@ async fn serve(mut s: TcpStream, source: Arc<dyn TrackSource>) -> std::io::Resul
                         .as_ref()
                         .filter(|w| !w.bands.is_empty())
                         .map(anlz::encode_pwv7),
+                    b"PSSI" => t.phrases.as_ref().map(anlz::encode_pssi),
                     b"PCO2" => {
                         let mut b = anlz::encode_pco2(&t.cues, false);
                         b.extend(anlz::encode_pco2(&t.cues, true));

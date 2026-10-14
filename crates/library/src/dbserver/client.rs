@@ -3,7 +3,7 @@
 use super::field::Field;
 use super::message::{dmst, item, kind, menu, Message, SETUP_TRANSACTION};
 use crate::anlz;
-use crate::track::{CuePoint, GridBeat, TrackMetadata, Waveform};
+use crate::track::{CuePoint, GridBeat, PhraseAnalysis, TrackMetadata, Waveform};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -287,6 +287,14 @@ impl DbClient {
         let blob = self.anlz_tag(loc, b"PWV5", b"EXT").await?;
         anlz::find_tag(&blob, b"PWV5")
             .and_then(anlz::parse_pwv5)
+            .ok_or(DbError::NotFound)
+    }
+
+    /// rekordbox-Phrasenanalyse (PSSI aus `EXT`).
+    pub async fn phrases(&mut self, loc: TrackLocation) -> Result<PhraseAnalysis, DbError> {
+        let blob = self.anlz_tag(loc, b"PSSI", b"EXT").await?;
+        anlz::find_tag(&blob, b"PSSI")
+            .and_then(anlz::parse_pssi)
             .ok_or(DbError::NotFound)
     }
 

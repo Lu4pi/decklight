@@ -1,0 +1,19 @@
+[package]
+name = "decklight-auto"
+description = "Auto-Pilot: Track-Struktur (Intro, Breakdown, Build-up, Drop …) erkennen und das Licht danach steuern"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+decklight-library.workspace = true
+decklight-show.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+decklight-simulator.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

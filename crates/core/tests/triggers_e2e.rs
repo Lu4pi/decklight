@@ -92,6 +92,7 @@ async fn osc_cues_fire_once_on_time_and_stop_on_panic() {
             midi_port: None,
             bpm_command: None,
             phase_command: None,
+            auto: Default::default(),
         },
         ..Default::default()
     })

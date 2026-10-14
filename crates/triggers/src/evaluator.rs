@@ -52,6 +52,8 @@ pub enum FiringSource {
     },
     /// Von Hand ausgelöst (Test-Button, Cue in der Oberfläche).
     Manual { name: String },
+    /// Auto-Pilot (Abschnitt, Hit, Pause …).
+    Auto { name: String },
 }
 
 /// Ein Auslösen mit den fertigen Aktionen (Platzhalter ersetzt).
@@ -69,14 +71,15 @@ impl Firing {
         match &self.source {
             FiringSource::Cue { name, .. }
             | FiringSource::Global { name, .. }
-            | FiringSource::Manual { name } => name,
+            | FiringSource::Manual { name }
+            | FiringSource::Auto { name } => name,
         }
     }
 
     pub fn id(&self) -> u32 {
         match &self.source {
             FiringSource::Cue { id, .. } | FiringSource::Global { id, .. } => *id,
-            FiringSource::Manual { .. } => 0,
+            FiringSource::Manual { .. } | FiringSource::Auto { .. } => 0,
         }
     }
 }

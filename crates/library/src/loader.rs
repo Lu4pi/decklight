@@ -21,6 +21,7 @@ pub async fn load_track(
     let beat_grid = c.beat_grid(loc).await.unwrap_or_default();
     let waveform = c.waveform(loc).await.ok();
     let cues = c.cues(loc).await.unwrap_or_default();
+    let phrases = c.phrases(loc).await.ok();
     c.close().await;
     Ok(TrackData {
         metadata,
@@ -28,5 +29,6 @@ pub async fn load_track(
         beat_grid,
         cues,
         waveform,
+        phrases,
     })
 }

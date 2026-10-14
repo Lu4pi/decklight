@@ -4,6 +4,7 @@ use crate::metadata::{self, FetchRequest};
 use crate::monitor::{Level, Monitor};
 use crate::timecode_out::{self, TimecodeOutConfig, TimecodeStatus, TimecodeThread};
 use crate::triggers_out::{self, ActionOutConfig, Manual, TriggerThread};
+use decklight_auto::{AutoStatus, Structure};
 use decklight_engine::{ClockConfig, Engine, EngineEvent, MasterMode, Stamped, TrackRef};
 use decklight_library::{TrackData, TrackMetadata};
 use decklight_prolink::{Link, LinkConfig, LinkEvent};
@@ -74,6 +75,13 @@ pub struct Shared {
     pub triggers: TriggerTable,
     pub trigger_log: ActionLog,
     pub monitor: Monitor,
+    /// Auto-Pilot ein (Oberfläche, Handy, OSC von der MA3). Startet immer aus.
+    pub auto_active: bool,
+    /// Was der Auto-Pilot gerade tut (vom Trigger-Thread gepflegt).
+    pub auto_status: AutoStatus,
+    /// Track-Struktur je Kennung, mit Zeiger auf die Track-Daten, aus denen
+    /// sie berechnet wurde (neue Wellenform → neu berechnen).
+    structures: HashMap<TrackKey, (usize, Option<Arc<Structure>>)>,
     /// Seit wann das Master-Deck ohne Metadaten läuft (für die History).
     unnamed_since: Option<(TrackRef, f64)>,
 }
@@ -85,6 +93,30 @@ impl Shared {
 
     pub fn track_data(&self, r: &TrackRef) -> Option<Arc<TrackData>> {
         self.tracks.get(self.keys.get(r)?).cloned()
+    }
+
+    /// Struktur (Intro, Breakdown, Drop …) eines geladenen Tracks, einmal
+    /// berechnet und zwischengespeichert.
+    pub fn structure(&mut self, key: &TrackKey) -> Option<Arc<Structure>> {
+        let data = self.tracks.get(key)?.clone();
+        let id = Arc::as_ptr(&data) as usize;
+        if let Some((cached, s)) = self.structures.get(key) {
+            if *cached == id {
+                return s.clone();
+            }
+        }
+        let s = decklight_auto::analyze(&data).map(Arc::new);
+        if let Some(st) = &s {
+            tracing::info!(
+                track = %key,
+                segments = st.segments.len(),
+                pauses = st.pauses.len(),
+                phrases = st.has_phrases,
+                "Track-Struktur erkannt"
+            );
+        }
+        self.structures.insert(key.clone(), (id, s.clone()));
+        s
     }
 }
 
@@ -100,6 +132,7 @@ pub struct Core {
 /// Ausgangs-Threads; werden bei geänderten Einstellungen neu gestartet.
 struct Outputs {
     manual: std::sync::mpsc::Sender<Manual>,
+    _auto_in: Option<crate::auto_in::AutoInThread>,
     _timecode: Option<TimecodeThread>,
     _triggers: TriggerThread,
 }
@@ -116,6 +149,9 @@ impl Core {
             triggers: cfg.triggers,
             trigger_log: ActionLog::default(),
             monitor: Monitor::default(),
+            auto_active: false,
+            auto_status: AutoStatus::default(),
+            structures: HashMap::new(),
             unnamed_since: None,
         }));
         let (events, _) = broadcast::channel(4096);
@@ -205,6 +241,7 @@ impl Core {
             // Erst die alten Threads beenden, damit MIDI-Ports frei werden.
             *o = Outputs {
                 manual: std::sync::mpsc::channel().0,
+                _auto_in: None,
                 _timecode: None,
                 _triggers: TriggerThread::idle(),
             };
@@ -264,6 +301,12 @@ impl Core {
         }
     }
 
+    /// Auto-Pilot ein- oder ausschalten (`None`: umschalten). Gibt den neuen
+    /// Zustand zurück.
+    pub fn set_auto(&self, on: Option<bool>) -> bool {
+        set_auto(&self.shared, on)
+    }
+
     /// Aktionen sofort senden (Test-Button, Cue von Hand). Läuft auch bei Not-Aus.
     pub fn fire(&self, name: &str, deck: Option<u8>, actions: Vec<Action>) {
         if let Ok(o) = self.outputs.lock() {
@@ -299,14 +342,38 @@ impl Outputs {
     ) -> Self {
         let timecode = timecode.map(|tc| timecode_out::spawn(tc, epoch, shared.clone()));
         let (manual, manual_rx) = std::sync::mpsc::channel();
+        let auto_in = actions
+            .auto
+            .osc_in_port
+            .and_then(|port| crate::auto_in::spawn(port, shared.clone()));
         let triggers =
             triggers_out::spawn(actions, epoch, shared.clone(), events.clone(), manual_rx);
         Self {
             manual,
+            _auto_in: auto_in,
             _timecode: timecode,
             _triggers: triggers,
         }
     }
+}
+
+/// Auto-Pilot schalten; auch für den OSC-Eingang.
+pub(crate) fn set_auto(shared: &Arc<Mutex<Shared>>, on: Option<bool>) -> bool {
+    let Ok(mut s) = shared.lock() else {
+        return false;
+    };
+    let new = on.unwrap_or(!s.auto_active);
+    if new != s.auto_active {
+        s.auto_active = new;
+        tracing::info!(on = new, "Auto-Pilot");
+        if new {
+            s.monitor.warn(Level::Info, "Auto-Pilot an");
+        } else {
+            s.monitor
+                .warn(Level::Info, "Auto-Pilot aus: Licht zurück an den Operator");
+        }
+    }
+    new
 }
 
 /// So lange spielt ein Track ohne Metadaten, bevor er trotzdem in die History kommt.

@@ -1,5 +1,16 @@
 # Änderungen
 
+## Unveröffentlicht
+
+- **Auto-Pilot:** Licht folgt dem Track, wenn der Operator kurz weg ist. DeckLight
+  liest die rekordbox-Phrasenanalyse (PSSI) und verrechnet sie mit der
+  Drei-Band-Wellenform zu Intro, Groove, Breakdown, Build-up, Drop, Pausen und
+  Outro. Befehle je Abschnitt an die grandMA3 auf die Eins genau, Drop-Hit,
+  Blackout bei Pausen und Stopp, Build-up stufenlos auf Speed-Master 2, Look-Wechsel
+  alle 16 Takte, Übergabe im Mix auf der nächsten Eins. Ein/Aus per OSC von der MA3
+  (`/decklight/auto`), mit der AUTO-Taste und am Handy; Schattenmodus zum Prüfen.
+  Struktur-Band unter allen Wellenformen. Anleitung: [docs/auto.md](docs/auto.md).
+
 ## 1.0.0
 
 Erste Version für den Einsatz am echten Setup.

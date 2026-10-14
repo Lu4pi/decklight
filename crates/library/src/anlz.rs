@@ -1,11 +1,14 @@
 //! Formate der Analyse-Daten: Beatgrid aus dem dbserver, Tags aus Rekordbox'
-//! ANLZ-Dateien (PWV5 farbige und PWV7 Drei-Band-Wellenform, PCO2 Cues). ANLZ ist Big Endian,
+//! ANLZ-Dateien (PWV5 farbige und PWV7 Drei-Band-Wellenform, PCO2 Cues, PSSI Phrasen). ANLZ ist Big Endian,
 //! das dbserver-Beatgrid Little Endian.
 //!
 //! Zu jedem Parser gibt es einen Encoder; Simulator und Tests erzeugen damit
 //! dieselben Bytes, die echte Player liefern.
 
-use crate::track::{CueKind, CuePoint, GridBeat, WaveColumn, Waveform};
+use crate::track::{
+    CueKind, CuePoint, GridBeat, Phrase, PhraseAnalysis, PhraseKind, PhraseMood, WaveColumn,
+    Waveform,
+};
 
 fn be32(d: &[u8], at: usize) -> Option<u32> {
     d.get(at..at + 4)
@@ -346,6 +349,97 @@ pub fn encode_pco2(cues: &[CuePoint], hot: bool) -> Vec<u8> {
     d
 }
 
+/// XOR-Maske, mit der rekordbox den PSSI-Inhalt in Exporten verschleiert
+/// (ab der Stimmung, zyklisch, um die Phrasenzahl verschoben).
+const PSSI_MASK: [u8; 19] = [
+    0xCB, 0xE1, 0xEE, 0xFA, 0xE5, 0xEE, 0xAD, 0xEE, 0xE9, 0xD2, 0xE9, 0xEB, 0xE1, 0xE9, 0xF3, 0xE8,
+    0xE9, 0xF4, 0xE1,
+];
+
+fn pssi_xor(body: &mut [u8], count: u16) {
+    let c = count as u8;
+    for (i, b) in body.iter_mut().enumerate() {
+        *b ^= PSSI_MASK[i % PSSI_MASK.len()].wrapping_add(c);
+    }
+}
+
+/// Ab hier ist der PSSI-Inhalt maskiert (Stimmung, Ende, Phrasen).
+const PSSI_BODY: usize = 0x12;
+const PSSI_ENTRY: usize = 24;
+
+/// PSSI: rekordbox-Phrasenanalyse („Song Structure“) aus `.EXT`. Erkennt
+/// maskierte (Export) und unmaskierte Daten selbst.
+pub fn parse_pssi(tag: &[u8]) -> Option<PhraseAnalysis> {
+    if tag.get(..4)? != b"PSSI" {
+        return None;
+    }
+    let len_tag = (be32(tag, 8)? as usize).min(tag.len());
+    let entry_len = (be32(tag, 0x0c)? as usize).max(PSSI_ENTRY);
+    let count = u16::from_be_bytes([*tag.get(0x10)?, *tag.get(0x11)?]);
+    let mut body = tag.get(PSSI_BODY..len_tag)?.to_vec();
+    let raw_mood = u16::from_be_bytes([*body.first()?, *body.get(1)?]);
+    if raw_mood > 20 {
+        pssi_xor(&mut body, count);
+    }
+    let mood = match u16::from_be_bytes([body[0], body[1]]) {
+        1 => PhraseMood::High,
+        2 => PhraseMood::Mid,
+        3 => PhraseMood::Low,
+        _ => return None,
+    };
+    let end_beat = u32::from(u16::from_be_bytes([*body.get(8)?, *body.get(9)?]));
+    let entries = body.get(0x20 - PSSI_BODY..)?;
+    let phrases = entries
+        .chunks(entry_len)
+        .take(usize::from(count))
+        .filter(|e| e.len() >= PSSI_ENTRY)
+        .map(|e| Phrase {
+            beat: u32::from(u16::from_be_bytes([e[2], e[3]])),
+            kind: PhraseKind::from_raw(mood, u16::from_be_bytes([e[4], e[5]])),
+            fill_beat: (e[21] != 0)
+                .then(|| u32::from(u16::from_be_bytes([e[22], e[23]])))
+                .filter(|&b| b > 0),
+        })
+        .collect();
+    Some(PhraseAnalysis {
+        mood,
+        end_beat,
+        phrases,
+    })
+}
+
+/// PSSI wie in einem Export (maskiert).
+pub fn encode_pssi(p: &PhraseAnalysis) -> Vec<u8> {
+    let count = p.phrases.len() as u16;
+    let mut d = tag_header(b"PSSI", 0x20, (0x20 + PSSI_ENTRY * p.phrases.len()) as u32);
+    d.extend_from_slice(&(PSSI_ENTRY as u32).to_be_bytes());
+    d.extend_from_slice(&count.to_be_bytes());
+    let mut body = Vec::new();
+    let mood = match p.mood {
+        PhraseMood::High => 1u16,
+        PhraseMood::Mid => 2,
+        PhraseMood::Low => 3,
+    };
+    body.extend_from_slice(&mood.to_be_bytes());
+    body.extend_from_slice(&[0; 6]);
+    body.extend_from_slice(&(p.end_beat as u16).to_be_bytes());
+    body.extend_from_slice(&[0, 0, 0, 0]); // unbekannt, Bank, unbekannt
+    for (i, ph) in p.phrases.iter().enumerate() {
+        let mut e = [0u8; PSSI_ENTRY];
+        e[0..2].copy_from_slice(&(i as u16 + 1).to_be_bytes());
+        e[2..4].copy_from_slice(&(ph.beat as u16).to_be_bytes());
+        e[4..6].copy_from_slice(&ph.kind.to_raw(p.mood).to_be_bytes());
+        if let Some(f) = ph.fill_beat {
+            e[21] = 1;
+            e[22..24].copy_from_slice(&(f as u16).to_be_bytes());
+        }
+        body.extend_from_slice(&e);
+    }
+    pssi_xor(&mut body, count);
+    d.extend_from_slice(&body);
+    d
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,5 +538,39 @@ mod tests {
         let tag = encode_pco2(&cues, true);
         assert_eq!(parse_pco2(&tag), Some(cues));
         assert_eq!(parse_pco2(&encode_pco2(&[], false)), Some(vec![]));
+    }
+
+    #[test]
+    fn pssi_roundtrip_masked() {
+        let p = PhraseAnalysis {
+            mood: PhraseMood::High,
+            end_beat: 257,
+            phrases: vec![
+                Phrase {
+                    beat: 1,
+                    kind: PhraseKind::Intro,
+                    fill_beat: None,
+                },
+                Phrase {
+                    beat: 65,
+                    kind: PhraseKind::Down,
+                    fill_beat: None,
+                },
+                Phrase {
+                    beat: 97,
+                    kind: PhraseKind::Up,
+                    fill_beat: Some(125),
+                },
+                Phrase {
+                    beat: 129,
+                    kind: PhraseKind::Chorus,
+                    fill_beat: None,
+                },
+            ],
+        };
+        let tag = encode_pssi(&p);
+        // Maskiert: die Stimmung steht nicht im Klartext da.
+        assert!(u16::from_be_bytes([tag[0x12], tag[0x13]]) > 20);
+        assert_eq!(parse_pssi(&tag), Some(p));
     }
 }

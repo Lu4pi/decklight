@@ -51,6 +51,11 @@ pub enum Command {
         armed: bool,
     },
     Panic,
+    /// Auto-Pilot ein/aus (`on` leer: umschalten).
+    SetAuto {
+        #[serde(default)]
+        on: Option<bool>,
+    },
     SetScope {
         scope: FireScope,
     },
@@ -136,6 +141,10 @@ pub fn apply(core: &Core, cmd: Command, rate: FrameRate) -> Reply {
             Reply::ok()
         }
         Command::FixFirewall => Reply::err("Firewall-Freigabe läuft über den Server"),
+        Command::SetAuto { on } => {
+            core.set_auto(on);
+            Reply::ok()
+        }
         Command::SetArmed { id: None, armed } => {
             core.set_armed(armed);
             Reply::ok()
@@ -260,6 +269,10 @@ mod tests {
                 armed: false
             }
         );
+        let c: Command = serde_json::from_str(r#"{"cmd":"set_auto","on":true}"#).unwrap();
+        assert_eq!(c, Command::SetAuto { on: Some(true) });
+        let c: Command = serde_json::from_str(r#"{"cmd":"set_auto"}"#).unwrap();
+        assert_eq!(c, Command::SetAuto { on: None });
         let c: Command = serde_json::from_str(r#"{"cmd":"panic"}"#).unwrap();
         assert_eq!(c, Command::Panic);
         let c: Command =

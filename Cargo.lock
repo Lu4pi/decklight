@@ -409,9 +409,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "decklight-auto"
+version = "1.0.0"
+dependencies = [
+ "decklight-library",
+ "decklight-show",
+ "decklight-simulator",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "decklight-core"
 version = "1.0.0"
 dependencies = [
+ "decklight-auto",
  "decklight-engine",
  "decklight-library",
  "decklight-outputs",
@@ -476,6 +488,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "decklight-auto",
  "decklight-core",
  "decklight-engine",
  "decklight-library",

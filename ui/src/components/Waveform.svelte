@@ -5,6 +5,7 @@
   import type { LoadedTrack } from "../lib/tracks";
   import type { Cue, RekordboxCue } from "../lib/types";
   import { barToMs } from "../lib/tracks";
+  import { SECTION_COLOR, SECTION_LABEL } from "../lib/sections";
 
   interface Props {
     track: LoadedTrack | null;
@@ -18,6 +19,8 @@
     rekordboxCues?: RekordboxCue[];
     selected?: number | null;
     height?: number;
+    /** Abschnitte des Auto-Piloten als farbiges Band unten. */
+    structure?: boolean;
     onpick?: (ms: number) => void;
   }
 
@@ -31,6 +34,7 @@
     rekordboxCues = [],
     selected = null,
     height = 96,
+    structure = true,
     onpick,
   }: Props = $props();
 
@@ -151,10 +155,12 @@
         const x = (pos / dur) * w;
         g.fillStyle = "rgba(7,9,11,0.55)";
         g.fillRect(0, 0, x, h);
+        band(g, t, w, h, dpr, (ms) => (ms / dur) * w);
         markers(g, t, w, h, dpr, (ms) => (ms / dur) * w);
         g.fillStyle = "#fff";
         g.fillRect(Math.round(x) - dpr, 0, 2 * dpr, h);
       } else {
+        band(g, t, w, h, dpr, (ms) => (ms / dur) * w);
         markers(g, t, w, h, dpr, (ms) => (ms / dur) * w);
       }
       return;
@@ -200,9 +206,45 @@
       g.fillRect(x, 0, down ? 2 * dpr : dpr, down ? 10 * dpr : 6 * dpr);
       g.fillRect(x, h - (down ? 10 : 6) * dpr, down ? 2 * dpr : dpr, (down ? 10 : 6) * dpr);
     }
+    band(g, t, w, h, dpr, toX);
     markers(g, t, w, h, dpr, toX);
     g.fillStyle = "#fff";
     g.fillRect(Math.round(w / 2) - dpr, 0, 2 * dpr, h);
+  }
+
+  /** Struktur-Band: Intro, Groove, Breakdown, Build-up, Drop, Outro; Pausen hell. */
+  function band(
+    g: CanvasRenderingContext2D,
+    t: LoadedTrack,
+    w: number,
+    h: number,
+    dpr: number,
+    toX: (ms: number) => number,
+  ) {
+    const st = t.detail.structure;
+    if (!structure || !st || st.segments.length === 0) return;
+    const bh = (mode === "overview" ? 4 : 5) * dpr;
+    for (const p of st.pauses) {
+      const a = toX(p.start_ms);
+      const b = toX(p.end_ms);
+      if (b < 0 || a > w) continue;
+      g.fillStyle = "rgba(255,255,255,0.16)";
+      g.fillRect(a, 0, Math.max(dpr, b - a), h);
+    }
+    for (const s of st.segments) {
+      const a = Math.max(0, toX(s.start_ms));
+      const b = Math.min(w, toX(s.end_ms));
+      if (b <= 0 || a >= w) continue;
+      g.globalAlpha = s.confidence >= 50 ? 0.95 : 0.45;
+      g.fillStyle = SECTION_COLOR[s.section];
+      g.fillRect(a, h - bh, Math.max(1, b - a - dpr), bh);
+      g.globalAlpha = 1;
+      const x0 = toX(s.start_ms);
+      if (mode === "detail" && x0 >= 0 && x0 < w) {
+        g.font = `bold ${9 * dpr}px system-ui`;
+        g.fillText(SECTION_LABEL[s.section].toUpperCase(), x0 + 3 * dpr, h - bh - 3 * dpr);
+      }
+    }
   }
 
   function markers(
