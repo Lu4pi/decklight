@@ -5,7 +5,8 @@ use crate::deck::SimTrack;
 use crate::scenario::{Command, Scenario};
 use decklight_library::dbserver::server::TrackSource;
 use decklight_library::{
-    CueKind, CuePoint, GridBeat, TrackData, TrackMetadata, WaveColumn, Waveform,
+    CueKind, CuePoint, GridBeat, Phrase, PhraseAnalysis, PhraseKind, PhraseMood, TrackData,
+    TrackMetadata, WaveColumn, Waveform,
 };
 use std::collections::HashMap;
 
@@ -88,6 +89,41 @@ impl SimTrack {
             beat_grid,
             cues,
             waveform: Some(self.waveform()),
+            phrases: Some(self.phrases(beats)),
+        }
+    }
+
+    /// Phrasen passend zur erzeugten Wellenform (Stimmung „High“): je 32 Takte
+    /// ein Abschnitt, jeder vierte ab dem zweiten ein Breakdown mit Build-up.
+    fn phrases(&self, beats: u32) -> PhraseAnalysis {
+        let section_beats = 128;
+        let sections = beats.div_ceil(section_beats);
+        let mut phrases = Vec::new();
+        for i in 0..sections {
+            let beat = i * section_beats + 1;
+            let kind = match i {
+                0 => PhraseKind::Intro,
+                _ if i + 1 == sections => PhraseKind::Outro,
+                _ if i % 4 == 1 => PhraseKind::Down,
+                _ => PhraseKind::Chorus,
+            };
+            phrases.push(Phrase {
+                beat,
+                kind,
+                fill_beat: None,
+            });
+            if kind == PhraseKind::Down && beat + 96 <= beats {
+                phrases.push(Phrase {
+                    beat: beat + 96,
+                    kind: PhraseKind::Up,
+                    fill_beat: Some(beat + 124),
+                });
+            }
+        }
+        PhraseAnalysis {
+            mood: PhraseMood::High,
+            end_beat: beats,
+            phrases,
         }
     }
 
@@ -114,7 +150,15 @@ impl SimTrack {
                 // Drei Bänder wie ein Club-Track: Kick im Bass, Flächen in den
                 // Mitten, Hi-Hats auf den Achteln in den Höhen.
                 let hat = (1.0 - ((phase * 2.0).fract() - 0.5).abs() * 8.0).max(0.0);
-                let (low, mid, high) = if breakdown {
+                // Breakdown: 24 Takte Fläche, dann 8 Takte Build-up mit
+                // steigenden Höhen und einem Beat Pause vor dem Drop.
+                let in_section = ((ms - self.first_beat_ms) / beat).rem_euclid(128.0);
+                let (low, mid, high) = if breakdown && in_section >= 127.0 {
+                    (0.0, 0.0, 0.0)
+                } else if breakdown && in_section >= 96.0 {
+                    let p = (in_section - 96.0) / 31.0;
+                    (0.05, 0.4 + 0.3 * p, 0.15 + 0.6 * p * (0.6 + 0.4 * hat))
+                } else if breakdown {
                     (0.05, 0.4 + 0.2 * noise, 0.1 * noise)
                 } else {
                     (

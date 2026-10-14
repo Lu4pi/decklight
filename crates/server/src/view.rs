@@ -1,6 +1,7 @@
 //! Was die Oberfläche zu sehen bekommt: kompakte JSON-Ansichten des Zustands.
 
 use base64::Engine as _;
+use decklight_auto::{AutoStatus, Pause, Segment};
 use decklight_core::{HistoryEntry, Shared, Warning};
 use decklight_engine::{DeckSnapshot, DeviceInfo, MasterMode};
 use decklight_library::{CuePoint, TrackData, TrackMetadata};
@@ -60,6 +61,8 @@ pub struct StateView {
     pub decks: Vec<DeckView>,
     pub timecode: TimecodeView,
     pub mixer_bpm: Option<f64>,
+    /// Auto-Pilot: an/aus, führendes Deck, Abschnitt, nächster Abschnitt.
+    pub auto: AutoStatus,
 }
 
 pub fn state(s: &Shared, t: f64, timecode_enabled: bool, rate: FrameRate) -> StateView {
@@ -116,6 +119,7 @@ pub fn state(s: &Shared, t: f64, timecode_enabled: bool, rate: FrameRate) -> Sta
             rate,
         },
         mixer_bpm: snap.mixer_bpm,
+        auto: s.auto_status.clone(),
     }
 }
 
@@ -218,6 +222,16 @@ pub struct TrackDetail {
     pub rekordbox_cues: Vec<CuePoint>,
     pub cues: Vec<Cue>,
     pub waveform: Option<WaveformView>,
+    /// Erkannte Abschnitte und Pausen (Auto-Pilot).
+    pub structure: Option<StructureView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StructureView {
+    pub segments: Vec<Segment>,
+    pub pauses: Vec<Pause>,
+    pub has_phrases: bool,
+    pub has_bands: bool,
 }
 
 /// Wellenform kompakt: je Spalte vier Bytes (Höhe 0–31, R, G, B), Base64.
@@ -231,7 +245,13 @@ pub struct WaveformView {
     pub bands: Option<String>,
 }
 
-pub fn track_detail(s: &Shared, key: &TrackKey) -> Option<TrackDetail> {
+pub fn track_detail(s: &mut Shared, key: &TrackKey) -> Option<TrackDetail> {
+    let structure = s.structure(key).map(|st| StructureView {
+        segments: st.segments.clone(),
+        pauses: st.pauses.clone(),
+        has_phrases: st.has_phrases,
+        has_bands: st.has_bands,
+    });
     let data = s.tracks.get(key)?;
     let waveform = data.waveform.as_ref().map(|w| {
         let mut bytes = Vec::with_capacity(w.columns.len() * 4);
@@ -257,5 +277,6 @@ pub fn track_detail(s: &Shared, key: &TrackKey) -> Option<TrackDetail> {
         rekordbox_cues: data.cues.clone(),
         cues: s.triggers.cues(key).to_vec(),
         waveform,
+        structure,
     })
 }

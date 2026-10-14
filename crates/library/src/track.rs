@@ -124,6 +124,99 @@ pub struct TrackData {
     pub beat_grid: Vec<GridBeat>,
     pub cues: Vec<CuePoint>,
     pub waveform: Option<Waveform>,
+    /// rekordbox-Phrasenanalyse (PSSI), wenn sie beim Analysieren an war.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phrases: Option<PhraseAnalysis>,
+}
+
+/// Stimmung der Phrasenanalyse; bestimmt, welche Phrasen-Arten vorkommen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhraseMood {
+    /// Elektronisch: Intro, Up, Down, Chorus, Outro.
+    High,
+    /// Intro, Verse 1–6, Bridge, Chorus, Outro.
+    Mid,
+    /// Intro, Verse 1–2, Bridge, Chorus, Outro.
+    Low,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "n", rename_all = "snake_case")]
+pub enum PhraseKind {
+    Intro,
+    Up,
+    Down,
+    Chorus,
+    /// Verse mit Nummer (1–6).
+    Verse(u8),
+    Bridge,
+    Outro,
+    Unknown(u16),
+}
+
+impl PhraseKind {
+    /// Rohwert aus der PSSI-Tabelle je nach Stimmung.
+    pub fn from_raw(mood: PhraseMood, raw: u16) -> Self {
+        match (mood, raw) {
+            (_, 1) => Self::Intro,
+            (PhraseMood::High, 2) => Self::Up,
+            (PhraseMood::High, 3) => Self::Down,
+            (PhraseMood::High, 5) => Self::Chorus,
+            (PhraseMood::High, 6) => Self::Outro,
+            (PhraseMood::Mid, 2..=7) => Self::Verse((raw - 1) as u8),
+            (PhraseMood::Low, 2..=4) => Self::Verse(1),
+            (PhraseMood::Low, 5..=7) => Self::Verse(2),
+            (PhraseMood::Mid | PhraseMood::Low, 8) => Self::Bridge,
+            (PhraseMood::Mid | PhraseMood::Low, 9) => Self::Chorus,
+            (PhraseMood::Mid | PhraseMood::Low, 10) => Self::Outro,
+            _ => Self::Unknown(raw),
+        }
+    }
+
+    /// Rohwert für den Encoder (Low: erster passender Wert).
+    pub fn to_raw(self, mood: PhraseMood) -> u16 {
+        match (mood, self) {
+            (_, Self::Intro) => 1,
+            (_, Self::Unknown(r)) => r,
+            (PhraseMood::High, Self::Up) => 2,
+            (PhraseMood::High, Self::Down) => 3,
+            (PhraseMood::High, Self::Chorus) => 5,
+            (PhraseMood::High, Self::Outro) => 6,
+            (PhraseMood::Mid, Self::Verse(n)) => u16::from(n.clamp(1, 6)) + 1,
+            (PhraseMood::Low, Self::Verse(n)) => {
+                if n <= 1 {
+                    2
+                } else {
+                    5
+                }
+            }
+            (_, Self::Bridge) => 8,
+            (_, Self::Chorus) => 9,
+            (_, Self::Outro) => 10,
+            // Up/Down gibt es nur bei High; ähnlichste Entsprechung.
+            (_, Self::Up | Self::Verse(_)) => 2,
+            (_, Self::Down) => 8,
+        }
+    }
+}
+
+/// Eine Phrase: beginnt auf Beat `beat` (ab 1, Index ins Beatgrid).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Phrase {
+    pub beat: u32,
+    pub kind: PhraseKind,
+    /// Beat, ab dem am Ende der Phrase ein Fill-in läuft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_beat: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhraseAnalysis {
+    pub mood: PhraseMood,
+    /// Beat, an dem die letzte Phrase endet.
+    pub end_beat: u32,
+    pub phrases: Vec<Phrase>,
 }
 
 impl TrackData {

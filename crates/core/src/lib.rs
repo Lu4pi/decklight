@@ -1,6 +1,7 @@
 //! Laufzeit von DeckLight. Verbindet PRO DJ LINK, Engine, Show-Daten und
 //! Ausgänge; Desktop-App, Webserver und Kommandozeile bauen darauf auf.
 
+pub mod auto_in;
 mod metadata;
 pub mod monitor;
 pub mod runtime;

@@ -1,6 +1,7 @@
 //! Echter Rekordbox-Export (Demo-Tracks, siehe `fixtures/rekordbox-demo/NOTICE.md`).
 
 use decklight_library::export::Export;
+use decklight_library::{PhraseKind, PhraseMood};
 use std::path::Path;
 
 #[test]
@@ -25,7 +26,17 @@ fn reads_the_rekordbox_demo_export() {
     let wave = t.waveform.unwrap();
     assert!((wave.columns.len() as f64 / 150.0 - 172.0).abs() < 1.5);
     assert!(wave.columns.iter().any(|c| c.height > 20));
+    // Phrasenanalyse (PSSI, im Export maskiert).
+    let p = t.phrases.unwrap();
+    assert_eq!(p.mood, PhraseMood::Mid);
+    assert_eq!(p.phrases.len(), 19);
+    assert_eq!(p.end_beat, 353);
+    assert!(p.phrases.windows(2).all(|w| w[0].beat < w[1].beat));
+    assert_eq!(p.phrases[9].kind, PhraseKind::Bridge);
     let t2 = ex.track(2).unwrap();
     assert_eq!(t2.metadata.bpm, Some(120.0));
     assert_eq!(t2.beat_grid.len(), 257);
+    let p2 = t2.phrases.unwrap();
+    assert_eq!(p2.phrases.first().map(|p| p.kind), Some(PhraseKind::Intro));
+    assert_eq!(p2.phrases.last().map(|p| p.kind), Some(PhraseKind::Outro));
 }

@@ -14,4 +14,7 @@ pub use cache::{TrackCache, TrackId};
 pub use dbserver::client::TrackLocation;
 pub use loader::load_track;
 pub use media::MediaCache;
-pub use track::{CueKind, CuePoint, GridBeat, TrackData, TrackMetadata, WaveColumn, Waveform};
+pub use track::{
+    CueKind, CuePoint, GridBeat, Phrase, PhraseAnalysis, PhraseKind, PhraseMood, TrackData,
+    TrackMetadata, WaveColumn, Waveform,
+};

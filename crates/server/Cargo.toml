@@ -10,6 +10,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 base64.workspace = true
+decklight-auto.workspace = true
 decklight-core.workspace = true
 decklight-engine.workspace = true
 decklight-library.workspace = true

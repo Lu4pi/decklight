@@ -67,6 +67,27 @@ fn sample() -> TrackData {
                 .collect(),
             bands: Vec::new(),
         }),
+        phrases: Some(PhraseAnalysis {
+            mood: PhraseMood::High,
+            end_beat: 97,
+            phrases: vec![
+                Phrase {
+                    beat: 1,
+                    kind: PhraseKind::Intro,
+                    fill_beat: None,
+                },
+                Phrase {
+                    beat: 33,
+                    kind: PhraseKind::Up,
+                    fill_beat: Some(61),
+                },
+                Phrase {
+                    beat: 65,
+                    kind: PhraseKind::Chorus,
+                    fill_beat: None,
+                },
+            ],
+        }),
     }
 }
 
@@ -87,6 +108,7 @@ async fn loads_everything_from_a_dbserver() {
     assert_eq!(data.artwork, want.artwork);
     assert_eq!(data.beat_grid, want.beat_grid);
     assert_eq!(data.cues, want.cues);
+    assert_eq!(data.phrases, want.phrases);
     // Farben werden auf 3 Bit je Kanal quantisiert.
     let w = data.waveform.unwrap();
     assert_eq!(w.columns.len(), 1500);

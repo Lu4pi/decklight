@@ -320,6 +320,7 @@ impl Export {
                     match &cc {
                         b"PWV5" => data.waveform = anlz::parse_pwv5(tag),
                         b"PCO2" => cues.extend(anlz::parse_pco2(tag).unwrap_or_default()),
+                        b"PSSI" => data.phrases = anlz::parse_pssi(tag),
                         _ => {}
                     }
                 }

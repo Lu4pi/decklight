@@ -7,6 +7,7 @@
   import Cues from "./Cues.svelte";
   import Outputs from "./Outputs.svelte";
   import Monitoring from "./Monitoring.svelte";
+  import Auto from "./Auto.svelte";
   import Toast from "../components/Toast.svelte";
   import ShowDialog from "../components/ShowDialog.svelte";
   import PhoneDialog from "../components/PhoneDialog.svelte";
@@ -20,7 +21,7 @@
     ["setlist", "Set List"],
     ["cues", "Cue List"],
   ] as const;
-  const all = ["viewer", "live", "setlist", "cues", "outputs", "monitoring"] as const;
+  const all = ["viewer", "live", "setlist", "cues", "auto", "outputs", "monitoring"] as const;
   type Tab = (typeof all)[number];
 
   function fromHash(): Tab {
@@ -43,6 +44,10 @@
   async function panic() {
     const r = await conn.command({ cmd: "panic" });
     if (!r.ok) toast(r.error ?? "Not-Aus fehlgeschlagen", "error");
+  }
+  async function toggleAuto() {
+    const r = await conn.command({ cmd: "set_auto", on: !s?.auto.active });
+    if (!r.ok) toast(r.error ?? "Auto nicht umgeschaltet", "error");
   }
   async function arm() {
     const r = await conn.command({ cmd: "set_armed", armed: true });
@@ -75,6 +80,8 @@
       <span class="led" class:on={conn.connected} title={conn.connected ? "Verbunden" : "Keine Verbindung zum Kern"}>LINK</span>
       <span class="led" class:on={s?.timecode.enabled && s.timecode.running} title="Timecode-Ausgang">TC</span>
       <span class="led" class:on={s?.armed} class:bad={s && !s.armed} title="Trigger scharf">ARM</span>
+      <span class="led" class:on={s?.auto.active && !s.auto.shadow} class:shadow={s?.auto.active && s.auto.shadow}
+        title={s?.auto.active ? (s.auto.shadow ? "Auto im Schattenmodus" : "Auto-Pilot aktiv") : "Auto-Pilot aus"}>AUTO</span>
     </div>
   </header>
 
@@ -93,6 +100,14 @@
       <button class="tool" onclick={() => (phoneOpen = true)} title="Auf Handy oder Tablet öffnen">
         <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M10.5 18.5h3" /></svg>
         <span>Handy</span>
+      </button>
+      <a class="tool" class:active={tab === "auto"} href="#auto" title="Auto-Pilot: Licht folgt Breakdown, Build-up und Drop">
+        <svg viewBox="0 0 24 24"><path d="M3 17l4-6 3 3 4-8 3 6 4-3" /><path d="M3 21h18" /></svg>
+        <span>Auto</span>
+      </a>
+      <button class="autobtn" class:on={s?.auto.active} class:shadow={s?.auto.active && s.auto.shadow} onclick={toggleAuto}
+        disabled={conn.readonly} title={s?.auto.active ? "Auto-Pilot aus: Licht zurück an den Operator" : "Auto-Pilot an"}>
+        AUTO<small>{s?.auto.active ? (s.auto.shadow ? "Schatten" : "an") : "aus"}</small>
       </button>
       <a class="tool" class:active={tab === "outputs"} href="#outputs" title="Netzwerk, Timecode, OSC/MIDI">
         <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4" /></svg>
@@ -124,6 +139,8 @@
       <Setlist />
     {:else if tab === "cues"}
       <Cues />
+    {:else if tab === "auto"}
+      <Auto />
     {:else if tab === "outputs"}
       <Outputs />
     {:else}
@@ -181,6 +198,44 @@
     background: #1fae3a;
     border-color: #1fae3a;
     color: #000;
+  }
+  .led.shadow {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #000;
+  }
+  .autobtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+    min-width: 64px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 2px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-weight: 800;
+    letter-spacing: 0.08em;
+  }
+  .autobtn small {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .autobtn.on {
+    background: #1fae3a;
+    border-color: #1fae3a;
+    color: #000;
+  }
+  .autobtn.on small {
+    color: #000;
+  }
+  .autobtn.shadow {
+    background: var(--accent);
+    border-color: var(--accent);
   }
   .led.bad {
     background: var(--danger);
