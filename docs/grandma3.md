@@ -104,6 +104,11 @@ DeckLight nutzt bewusst `/cmd` mit Befehlstext statt Objekt-Adressen, weil sich
 diese zwischen MA3-Versionen ändern. Mit Präfix `gma3` sendet DeckLight
 `/gma3/cmd "Go+ Exec 201"`.
 
+## 4. Auto-Pilot
+
+Für Momente ohne Operator: DeckLight erkennt Breakdown, Build-up und Drop und
+fährt eine eigene Sequenz. Einrichtung und MA3-Taste: [Auto-Pilot](auto.md).
+
 ## Probe ohne DJ
 
 1. `decklight simulate` (Kommandozeilen-Werkzeug, liegt jedem Release bei) spielt

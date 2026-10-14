@@ -4,7 +4,7 @@ Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das N
 überwachen und eine grandMA3 per Timecode und OSC synchron zur Musik fahren.
 
 **Installieren und loslegen:** [Einrichtung in 5 Schritten](docs/einrichtung.md) ·
-[grandMA3 einrichten](docs/grandma3.md) · [Rider-Vorlage](docs/rider.md)
+[grandMA3 einrichten](docs/grandma3.md) · [Auto-Pilot](docs/auto.md) · [Rider-Vorlage](docs/rider.md)
 
 ## Was DeckLight kann
 
@@ -16,6 +16,9 @@ Open-Source-Show-Steuerung für Pioneer/AlphaTheta-CDJs: Decks live sehen, das N
 - **Triggern:** Cue-Punkte (Zeit oder Takt/Schlag, Vorlauf) und Deck-Ereignisse
   lösen OSC-Befehle (`/cmd`) an die grandMA3 und MIDI Note/CC/Program aus.
   Not-Aus mit Esc.
+- **Auto-Pilot:** erkennt Intro, Breakdown, Build-up, Drop und Pausen aus der
+  rekordbox-Phrasenanalyse und der Wellenform und fährt die grandMA3 danach, auf
+  die Eins genau. Ein/Aus per Taste an der MA3, in DeckLight oder am Handy.
 - **Shows:** speichern, öffnen, exportieren, automatische Sicherungen; Tracks werden
   auch auf anderen USB-Sticks und nach geänderten Tags wiedererkannt.
 - **Web:** `/monitor` fürs Tablet, `/overlay` für OBS und Streams, optional mit PIN.
@@ -81,9 +84,10 @@ Ohne Anmeldung (`--passive`) schicken echte CDJs keinen Status.
 | `crates/prolink` | PRO DJ LINK: Pakete lesen/schreiben, Geräteerkennung, virtueller Player |
 | `crates/engine` | Deck-Zustand, Timecode-Uhr mit Jitterfilter, Master-Auswahl, Ereignisse |
 | `crates/outputs` | Timecode-Rechnung, Art-Net-Timecode, MTC, OSC, MIDI |
-| `crates/library` | dbserver-Client und -Server, ANLZ (Wellenform, Cues), Track-Cache |
+| `crates/library` | dbserver-Client und -Server, ANLZ (Wellenform, Cues, Phrasen), Track-Cache |
 | `crates/show` | Show-Daten: Track-Offsets mit CSV-Import/Export, Cues und Trigger |
 | `crates/triggers` | Auslöse-Logik für Cues und globale Trigger, Aktions-Log |
+| `crates/auto` | Auto-Pilot: Track-Struktur aus Phrasen und Wellenform, Abschnitts-Logik |
 | `crates/server` | Webserver: WebSocket-Zustand, Befehle, `/monitor`, `/overlay`, Einstellungen |
 | `crates/core` | Laufzeit: verbindet Netz, Engine, Show und Ausgänge |
 | `crates/simulator` | Virtuelle CDJs und DJM mit echten Paketen, Szenarien als JSON |

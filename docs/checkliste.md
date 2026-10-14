@@ -144,3 +144,15 @@ Erledigte Punkte werden hier abgehakt. Grundlage: Bauplan v1 vom 12.10.2026.
 - [ ] Am echten iPhone/Android im Club-WLAN testen (Lars)
 - [x] Echttest 13.10.: CDJ erkannt, aber keine Decks → virtueller Player folgt jetzt dem Netz der Player, Warnung ohne passende Netzwerkkarte, Paketzähler je Port, Windows-Firewall-Regel (Installer + Knopf unter Monitoring), Logdatei `decklight.log`
 - [ ] Erneuter Test am Laptop mit Ethernet-Link zum CDJ-Switch (Lars)
+
+
+## Auto-Pilot (Sound-to-Light mit Vorausschau)
+
+- [x] rekordbox-Phrasenanalyse (PSSI) lesen: dbserver, Export, NFS; maskierte Exporte; Test mit echtem Demo-Export
+- [x] Struktur-Analyse: Intro, Groove, Breakdown, Build-up, Drop, Outro, Pausen aus Phrasen + Drei-Band-Wellenform, Sicherheit je Abschnitt
+- [x] Auto-Pilot: folgt dem On-Air-Deck (Tempo-Master bei mehreren), Übergabe im Mix auf der nächsten Eins, kein Hit nach Sprung
+- [x] MA3-Befehle je Abschnitt mit Rotation, Drop-Hit, Blackout bei Pause und Stopp, Build-up stufenlos auf `Master 3.2`, Übergabe beim Ausschalten
+- [x] Ein/Aus per OSC (`/decklight/auto`, Port 8100), AUTO-Taste in der Oberfläche, Handy; Schattenmodus; Not-Aus gilt auch für Auto
+- [x] Struktur-Band unter allen Wellenformen, Auto-Seite mit Live-Zustand und „Drop in N Takten“
+- [x] Ende-zu-Ende-Test: simulierter CDJ → Auto per OSC an → Build, Blackout, Drop + Hit auf der Eins (−18 ms bei 20 ms Vorlauf)
+- [ ] Echttest mit CDJ-3000 und MA3 onPC im Schattenmodus, dann scharf (Lars)
